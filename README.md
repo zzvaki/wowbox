@@ -58,7 +58,9 @@ World of Warcraft/
 ├── _retail_/Interface/AddOns
 ├── _classic_/Interface/AddOns
 ├── _classic_era_/Interface/AddOns
-├── _classic_anniversary_/Interface/AddOns
+├── _anniversary_/Interface/AddOns
+├── _classic_titan_/Interface/AddOns
+├── _classic_anniversary_/Interface/AddOns  # 旧版兼容
 ├── _ptr_/Interface/AddOns
 └── _beta_/Interface/AddOns
 ```

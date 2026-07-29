@@ -6,10 +6,13 @@ use std::{
     path::{Path, PathBuf},
 };
 
-const PRODUCT_FOLDERS: [(&str, &str, &str); 7] = [
+const PRODUCT_FOLDERS: [(&str, &str, &str); 9] = [
     ("_retail_", "retail", "正式服"),
     ("_classic_", "classic", "经典进度服"),
     ("_classic_era_", "classic_era", "经典旧世"),
+    ("_anniversary_", "classic_anniversary", "周年纪念服"),
+    ("_classic_titan_", "classic_titan", "经典服（Titan）"),
+    // Retained for older installations created before the current folder layout.
     ("_classic_anniversary_", "classic_anniversary", "周年纪念服"),
     ("_ptr_", "ptr", "测试服"),
     ("_classic_ptr_", "classic_ptr", "经典测试服"),
@@ -357,9 +360,42 @@ fn path_string(path: &Path) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::scan_addons;
+    use super::{detect_installations, scan_addons};
     use std::fs;
     use tempfile::tempdir;
+
+    #[test]
+    fn detects_current_china_client_folder_layout() {
+        let temporary_directory = tempdir().expect("create temporary directory");
+        for product_folder in [
+            "_anniversary_",
+            "_classic_",
+            "_classic_era_",
+            "_classic_titan_",
+        ] {
+            fs::create_dir_all(
+                temporary_directory
+                    .path()
+                    .join(product_folder)
+                    .join("Interface")
+                    .join("AddOns"),
+            )
+            .expect("create client AddOns directory");
+        }
+
+        let installations = detect_installations(Some(
+            temporary_directory.path().to_string_lossy().into_owned(),
+        ))
+        .expect("detect current client directories");
+
+        assert_eq!(installations.len(), 4);
+        assert!(installations.iter().any(|item| {
+            item.product_folder == "_anniversary_" && item.flavor == "classic_anniversary"
+        }));
+        assert!(installations.iter().any(|item| {
+            item.product_folder == "_classic_titan_" && item.flavor == "classic_titan"
+        }));
+    }
 
     #[test]
     fn scans_localized_toc_metadata_and_merges_companion_folders() {

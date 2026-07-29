@@ -3,6 +3,7 @@ export type GameFlavor =
   | "classic"
   | "classic_era"
   | "classic_anniversary"
+  | "classic_titan"
   | "classic_ptr"
   | "ptr"
   | "beta";

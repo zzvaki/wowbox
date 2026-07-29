@@ -261,6 +261,7 @@ fn flavor_tokens(flavor: &str) -> Vec<&'static str> {
         "beta" => vec!["retail", "beta"],
         "classic_era" => vec!["classic", "era"],
         "classic_anniversary" => vec!["classic", "anniversary"],
+        "classic_titan" => vec!["classic", "titan"],
         "classic_ptr" => vec!["classic", "ptr"],
         "classic" => vec!["classic"],
         _ => vec!["retail"],
