@@ -67,7 +67,11 @@ pub fn detect_installations(custom_root: Option<String>) -> Result<Vec<GameInsta
     }
 }
 
-pub fn scan_addons(addons_path: &str, _flavor: &str) -> Result<Vec<AddonInfo>, String> {
+pub fn scan_addons(
+    addons_path: &str,
+    _flavor: &str,
+    locale: &str,
+) -> Result<Vec<AddonInfo>, String> {
     let root = Path::new(addons_path);
     if !root.is_dir() {
         return Err(format!("插件目录不存在：{}", root.display()));
@@ -95,8 +99,8 @@ pub fn scan_addons(addons_path: &str, _flavor: &str) -> Result<Vec<AddonInfo>, S
 
         if let Some(existing) = grouped.get_mut(&group_id) {
             existing.folders.push(folder_name.clone());
-            let title = clean_wow_text(&localized_value(&metadata, "title"));
-            let notes = clean_wow_text(&localized_value(&metadata, "notes"));
+            let title = clean_wow_text(&localized_value(&metadata, "title", locale));
+            let notes = clean_wow_text(&localized_value(&metadata, "notes", locale));
             let author = clean_wow_text(metadata.get("author").map(String::as_str).unwrap_or(""));
             let version = metadata
                 .get("version")
@@ -116,12 +120,12 @@ pub fn scan_addons(addons_path: &str, _flavor: &str) -> Result<Vec<AddonInfo>, S
             if existing.author.is_empty() && !author.is_empty() {
                 existing.author = author;
             }
-            if existing.version == "\u{672a}\u{77e5}" {
+            if existing.version.is_empty() {
                 if let Some(version) = version {
                     existing.version = version.clone();
                 }
             }
-            if existing.interface_version == "\u{672a}\u{77e5}" {
+            if existing.interface_version.is_empty() {
                 if let Some(interface_version) = interface_version {
                     existing.interface_version = interface_version.clone();
                 }
@@ -132,7 +136,7 @@ pub fn scan_addons(addons_path: &str, _flavor: &str) -> Result<Vec<AddonInfo>, S
             continue;
         }
 
-        let title = localized_value(&metadata, "title");
+        let title = localized_value(&metadata, "title", locale);
         let addon = AddonInfo {
             id: group_id.clone(),
             title: if title.is_empty() {
@@ -140,17 +144,14 @@ pub fn scan_addons(addons_path: &str, _flavor: &str) -> Result<Vec<AddonInfo>, S
             } else {
                 clean_wow_text(&title)
             },
-            notes: clean_wow_text(&localized_value(&metadata, "notes")),
+            notes: clean_wow_text(&localized_value(&metadata, "notes", locale)),
             author: clean_wow_text(metadata.get("author").map(String::as_str).unwrap_or("")),
             version: metadata
                 .get("version")
                 .cloned()
                 .filter(|value| !value.trim().is_empty())
-                .unwrap_or_else(|| "未知".into()),
-            interface_version: metadata
-                .get("interface")
-                .cloned()
-                .unwrap_or_else(|| "未知".into()),
+                .unwrap_or_default(),
+            interface_version: metadata.get("interface").cloned().unwrap_or_default(),
             source: source.to_string(),
             source_id,
             folder_name: folder_name.clone(),
@@ -310,9 +311,10 @@ fn parse_toc(path: &Path) -> Result<HashMap<String, String>, String> {
     Ok(metadata)
 }
 
-fn localized_value(metadata: &HashMap<String, String>, key: &str) -> String {
+fn localized_value(metadata: &HashMap<String, String>, key: &str, locale: &str) -> String {
+    let locale_key = locale.to_ascii_lowercase().replace('-', "");
     metadata
-        .get(&format!("{key}-zhcn"))
+        .get(&format!("{key}-{locale_key}"))
         .or_else(|| metadata.get(key))
         .cloned()
         .unwrap_or_default()
@@ -446,7 +448,7 @@ mod tests {
 
         fs::write(
             details_path.join("Details.toc"),
-            "## Interface: 110200\n## Title: |cff00ff00Details!|r\n## Title-zhCN: Details! \u{4f24}\u{5bb3}\u{7edf}\u{8ba1}\n## Notes-zhCN: \u{56e2}\u{961f}\u{6218}\u{6597}\u{6570}\u{636e}\n## Author: Terciob\n## Version: 11.2.0\n## X-Curse-Project-ID: 3358\n",
+            "## Interface: 110200\n## Title: |cff00ff00Details!|r\n## Title-enUS: Details! Damage Meter\n## Notes-enUS: Combat statistics\n## Title-zhCN: Details! \u{4f24}\u{5bb3}\u{7edf}\u{8ba1}\n## Notes-zhCN: \u{56e2}\u{961f}\u{6218}\u{6597}\u{6570}\u{636e}\n## Author: Terciob\n## Version: 11.2.0\n## X-Curse-Project-ID: 3358\n",
         )
         .expect("write Details toc");
         fs::write(
@@ -460,7 +462,8 @@ mod tests {
         )
         .expect("write local toc");
 
-        let addons = scan_addons(&addons_path.to_string_lossy(), "retail").expect("scan addons");
+        let addons =
+            scan_addons(&addons_path.to_string_lossy(), "retail", "zh-CN").expect("scan addons");
         let details = addons
             .iter()
             .find(|addon| addon.id == "curseforge:3358")
@@ -488,5 +491,14 @@ mod tests {
             .any(|folder| folder == "Details_DataStorage"));
         assert_eq!(local.status, "untracked");
         assert_eq!(local.title, "\u{672c}\u{5730}\u{63d2}\u{4ef6}");
+
+        let english_addons = scan_addons(&addons_path.to_string_lossy(), "retail", "en-US")
+            .expect("scan English add-ons");
+        let english_details = english_addons
+            .iter()
+            .find(|addon| addon.id == "curseforge:3358")
+            .expect("English CurseForge add-on");
+        assert_eq!(english_details.title, "Details! Damage Meter");
+        assert_eq!(english_details.notes, "Combat statistics");
     }
 }

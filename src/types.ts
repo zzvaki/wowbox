@@ -10,6 +10,7 @@ export type GameFlavor =
 
 export type AddonSource = "curseforge" | "wowinterface" | "unknown";
 export type PluginDataSource = "curseforge" | "wowinterface";
+export type AppLocale = "zh-CN" | "zh-TW" | "en-US" | "ja-JP";
 export type AddonStatus =
   | "current"
   | "update"
@@ -75,6 +76,7 @@ export interface UpdateResult {
 }
 
 export interface AppSettings {
+  language: AppLocale;
   gameRoot: string;
   clientPaths: Partial<Record<GameFlavor, string>>;
   pluginDataSource: PluginDataSource;

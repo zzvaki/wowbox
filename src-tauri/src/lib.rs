@@ -165,6 +165,7 @@ fn sync_authorized_game_roots(
 fn scan_addons(
     addons_path: String,
     flavor: String,
+    locale: String,
     managed_roots: State<'_, ManagedAddonRoots>,
 ) -> Result<Vec<AddonInfo>, String> {
     let root = std::fs::canonicalize(&addons_path)
@@ -177,7 +178,7 @@ fn scan_addons(
     if !is_managed {
         return Err("插件目录尚未由客户端检测流程授权，请先重新检测游戏目录。".into());
     }
-    scanner::scan_addons(&addons_path, &flavor)
+    scanner::scan_addons(&addons_path, &flavor, &locale)
 }
 
 #[tauri::command]

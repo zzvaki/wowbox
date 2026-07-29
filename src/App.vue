@@ -1,6 +1,12 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import {
+  dateEnUS,
+  dateJaJP,
+  dateZhCN,
+  dateZhTW,
+  enUS,
+  jaJP,
   NButton,
   NCollapse,
   NCollapseItem,
@@ -17,6 +23,8 @@ import {
   NTooltip,
   createDiscreteApi,
   type GlobalThemeOverrides,
+  zhCN,
+  zhTW,
 } from "naive-ui";
 import {
   AlertCircle,
@@ -47,10 +55,18 @@ import {
   scanAddons,
   syncAuthorizedGameRoots,
 } from "@/services/bridge";
+import {
+  detectLocale,
+  isAppLocale,
+  languageOptions,
+  translate,
+  type TranslationKey,
+} from "@/i18n";
 import type {
   AddonInfo,
   AddonSource,
   AddonStatus,
+  AppLocale,
   AppSettings,
   GameFlavor,
   GameInstallation,
@@ -83,7 +99,10 @@ const { message } = createDiscreteApi(["message"], {
   },
 });
 
+const initialLocale = detectLocale();
+
 const defaultSettings: AppSettings = {
+  language: initialLocale,
   gameRoot: "",
   clientPaths: {},
   pluginDataSource: "curseforge",
@@ -92,6 +111,19 @@ const defaultSettings: AppSettings = {
   checkOnLaunch: false,
 };
 
+const locale = ref<AppLocale>(initialLocale);
+const t = (key: TranslationKey, values?: Record<string, number | string>) =>
+  translate(locale.value, key, values);
+
+const naiveLocales = {
+  "zh-CN": { locale: zhCN, dateLocale: dateZhCN },
+  "zh-TW": { locale: zhTW, dateLocale: dateZhTW },
+  "en-US": { locale: enUS, dateLocale: dateEnUS },
+  "ja-JP": { locale: jaJP, dateLocale: dateJaJP },
+};
+const naiveLocale = computed(() => naiveLocales[locale.value].locale);
+const naiveDateLocale = computed(() => naiveLocales[locale.value].dateLocale);
+
 function cloneSettings(value: AppSettings): AppSettings {
   return {
     ...value,
@@ -99,39 +131,36 @@ function cloneSettings(value: AppSettings): AppSettings {
   };
 }
 
-const clientPathOptions: Array<{
-  flavor: GameFlavor;
-  label: string;
-  folder: string;
-}> = [
-  { flavor: "retail", label: "正式服", folder: "_retail_" },
-  { flavor: "classic", label: "经典进度服", folder: "_classic_" },
-  { flavor: "classic_era", label: "经典旧世", folder: "_classic_era_" },
-  {
-    flavor: "classic_anniversary",
-    label: "周年纪念服",
-    folder: "_anniversary_",
-  },
-  {
-    flavor: "classic_titan",
-    label: "泰坦重铸时光服",
-    folder: "_classic_titan_",
-  },
-  { flavor: "classic_ptr", label: "经典测试服", folder: "_classic_ptr_" },
-  { flavor: "ptr", label: "正式服测试服", folder: "_ptr_" },
-  { flavor: "beta", label: "Beta 客户端", folder: "_beta_" },
-];
+const gameFlavorKeys: Record<GameFlavor, TranslationKey> = {
+  retail: "gameRetail",
+  classic: "gameClassic",
+  classic_era: "gameClassicEra",
+  classic_anniversary: "gameAnniversary",
+  classic_titan: "gameTitan",
+  classic_ptr: "gameClassicPtr",
+  ptr: "gamePtr",
+  beta: "gameBeta",
+};
 
-const pluginDataSourceOptions = [
-  {
-    label: "CurseForge（已启用）",
-    value: "curseforge" satisfies PluginDataSource,
-  },
-  {
-    label: "WoWInterface（开发中）",
-    value: "wowinterface" satisfies PluginDataSource,
-  },
-];
+function gameFlavorLabel(flavor: GameFlavor) {
+  return t(gameFlavorKeys[flavor]);
+}
+
+const clientPathOptions = computed(() => [
+  { flavor: "retail" as const, label: gameFlavorLabel("retail"), folder: "_retail_" },
+  { flavor: "classic" as const, label: gameFlavorLabel("classic"), folder: "_classic_" },
+  { flavor: "classic_era" as const, label: gameFlavorLabel("classic_era"), folder: "_classic_era_" },
+  { flavor: "classic_anniversary" as const, label: gameFlavorLabel("classic_anniversary"), folder: "_anniversary_" },
+  { flavor: "classic_titan" as const, label: gameFlavorLabel("classic_titan"), folder: "_classic_titan_" },
+  { flavor: "classic_ptr" as const, label: gameFlavorLabel("classic_ptr"), folder: "_classic_ptr_" },
+  { flavor: "ptr" as const, label: gameFlavorLabel("ptr"), folder: "_ptr_" },
+  { flavor: "beta" as const, label: gameFlavorLabel("beta"), folder: "_beta_" },
+]);
+
+const pluginDataSourceOptions = computed(() => [
+  { label: t("sourceCurseForge"), value: "curseforge" satisfies PluginDataSource },
+  { label: t("sourceWowInterfaceChoice"), value: "wowinterface" satisfies PluginDataSource },
+]);
 
 const installations = ref<GameInstallation[]>([]);
 const activeInstallationId = ref("");
@@ -181,13 +210,13 @@ const visibleAddons = computed(() => {
 });
 
 const filterOptions = computed(() => [
-  { label: `全部插件 · ${addons.value.length}`, value: "all" },
-  { label: `可更新 · ${updateCount.value}`, value: "update" },
-  { label: `已是最新 · ${currentCount.value}`, value: "current" },
+  { label: t("filterAll", { count: addons.value.length }), value: "all" },
+  { label: t("filterUpdates", { count: updateCount.value }), value: "update" },
+  { label: t("filterCurrent", { count: currentCount.value }), value: "current" },
   {
-    label: `未关联 · ${
-      addons.value.filter((addon) => addon.status === "untracked").length
-    }`,
+    label: t("filterUntracked", {
+      count: addons.value.filter((addon) => addon.status === "untracked").length,
+    }),
     value: "untracked",
   },
 ]);
@@ -200,12 +229,16 @@ function loadSettings() {
     settings.value = {
       ...defaultSettings,
       ...stored,
+      language: isAppLocale(stored.language)
+        ? stored.language
+        : defaultSettings.language,
       clientPaths: stored.clientPaths ?? {},
       pluginDataSource: stored.pluginDataSource ?? "curseforge",
       curseforgeApiKey: stored.rememberApiKey
         ? (stored.curseforgeApiKey ?? "")
         : "",
     };
+    locale.value = settings.value.language;
     settingsDraft.value = cloneSettings(settings.value);
   } catch {
     localStorage.removeItem("wowbox:settings");
@@ -225,24 +258,30 @@ function openSettings() {
   settingsVisible.value = true;
 }
 
+function persistSettings(value: AppSettings) {
+  const stored = {
+    ...value,
+    curseforgeApiKey: value.rememberApiKey ? value.curseforgeApiKey : "",
+  };
+  localStorage.setItem("wowbox:settings", JSON.stringify(stored));
+  settings.value = value;
+  locale.value = value.language;
+}
+
 async function saveSettings() {
   const nextSettings = cloneSettings(settingsDraft.value);
   try {
     await syncAuthorizedGameRoots(configuredGamePaths(nextSettings));
   } catch (error) {
-    message.error(errorMessage(error, "无法保存游戏目录授权"));
+    if (nextSettings.language !== settings.value.language) {
+      persistSettings({ ...settings.value, language: nextSettings.language });
+    }
+    message.error(errorMessage(error, t("saveDirectoryError")));
     return;
   }
-  const stored = {
-    ...nextSettings,
-    curseforgeApiKey: nextSettings.rememberApiKey
-      ? nextSettings.curseforgeApiKey
-      : "",
-  };
-  localStorage.setItem("wowbox:settings", JSON.stringify(stored));
-  settings.value = nextSettings;
+  persistSettings(nextSettings);
   settingsVisible.value = false;
-  message.success("设置已保存");
+  message.success(t("savedSettings"));
   await refreshInstallations();
 }
 
@@ -250,7 +289,7 @@ async function cancelSettings() {
   try {
     await syncAuthorizedGameRoots(configuredGamePaths(settings.value));
   } catch (error) {
-    message.error(errorMessage(error, "无法还原游戏目录授权"));
+    message.error(errorMessage(error, t("restoreDirectoryError")));
     return;
   }
   settingsDraft.value = cloneSettings(settings.value);
@@ -278,7 +317,7 @@ async function refreshInstallations() {
       const firstError = detectionResults.find(
         (result): result is PromiseRejectedResult => result.status === "rejected",
       );
-      throw firstError?.reason ?? new Error("没有找到可用客户端");
+      throw firstError?.reason ?? new Error(t("gameDirectoryNotFound"));
     }
 
     const installationsByFlavor = new Map<GameFlavor, GameInstallation>();
@@ -312,7 +351,7 @@ async function refreshInstallations() {
       addons.value = [];
     }
   } catch (error) {
-    message.error(errorMessage(error, "没有找到游戏目录"));
+    message.error(errorMessage(error, t("gameDirectoryNotFound")));
   } finally {
     loadingInstallations.value = false;
   }
@@ -333,13 +372,14 @@ async function runScan(showNotice = true) {
     addons.value = await scanAddons(
       activeInstallation.value.addonsPath,
       activeInstallation.value.flavor,
+      locale.value,
     );
     scanCompletedAt.value = new Date();
     if (showNotice) {
-      message.success(`已识别 ${addons.value.length} 个插件`);
+      message.success(t("addonsDetected", { count: addons.value.length }));
     }
   } catch (error) {
-    message.error(errorMessage(error, "扫描插件失败"));
+    message.error(errorMessage(error, t("scanFailed")));
   } finally {
     scanning.value = false;
   }
@@ -348,7 +388,7 @@ async function runScan(showNotice = true) {
 async function runUpdateCheck() {
   if (!activeInstallation.value || !addons.value.length || checking.value) return;
   if (settings.value.pluginDataSource !== "curseforge") {
-    message.info("WoWInterface 数据源正在开发中；一期请切换为 CurseForge 后检查更新。");
+    message.info(t("wowInterfacePending"));
     return;
   }
   checking.value = true;
@@ -381,13 +421,15 @@ async function runUpdateCheck() {
     });
     checkedAt.value = new Date();
     const available = results.filter((result) => result.status === "update").length;
-    message.success(available ? `发现 ${available} 个可用更新` : "所有插件均为最新");
+    message.success(
+      available ? t("updatesFound", { count: available }) : t("allUpToDate"),
+    );
   } catch (error) {
     addons.value = addons.value.map((addon) => ({
       ...addon,
       status: addon.source === "unknown" ? "untracked" : "error",
     }));
-    message.error(errorMessage(error, "检查更新失败"));
+    message.error(errorMessage(error, t("checkUpdatesFailed")));
   } finally {
     checking.value = false;
   }
@@ -395,7 +437,7 @@ async function runUpdateCheck() {
 
 async function updateOne(addon: AddonInfo, quiet = false) {
   if (!addon.latestDownloadUrl) {
-    message.warning("更新源没有返回可下载文件");
+    message.warning(t("noDownload"));
     return false;
   }
   const previousStatus = addon.status;
@@ -407,12 +449,12 @@ async function updateOne(addon: AddonInfo, quiet = false) {
     });
     addon.version = result.version;
     addon.status = "current";
-    if (!quiet) message.success(`${addon.title} 已更新`);
+    if (!quiet) message.success(t("addonUpdated", { title: addon.title }));
     return true;
   } catch (error) {
     addon.status = previousStatus;
-    addon.error = errorMessage(error, "更新失败");
-    if (!quiet) message.error(`${addon.title} 更新失败`);
+    addon.error = errorMessage(error, t("updateFailed"));
+    if (!quiet) message.error(t("addonUpdateFailed", { title: addon.title }));
     return false;
   }
 }
@@ -427,9 +469,11 @@ async function updateAll() {
   }
   updatingAll.value = false;
   if (succeeded === pending.length) {
-    message.success(`${succeeded} 个插件已全部更新`);
+    message.success(t("allUpdated", { count: succeeded }));
   } else {
-    message.warning(`已更新 ${succeeded}/${pending.length} 个插件`);
+    message.warning(
+      t("updatesPartial", { succeeded, total: pending.length }),
+    );
   }
 }
 
@@ -445,13 +489,13 @@ async function selectClientPath(flavor: GameFlavor, label: string) {
     const detected = await detectInstallations(path);
     const installation = detected.find((item) => item.flavor === flavor);
     if (!installation) {
-      message.warning(`所选目录中没有找到${label}客户端`);
+      message.warning(t("clientNotInDirectory", { label }));
       return;
     }
     settingsDraft.value.clientPaths[flavor] = installation.path;
-    message.success(`${label}路径已设置`);
+    message.success(t("clientPathSaved", { label }));
   } catch (error) {
-    message.error(errorMessage(error, `无法识别${label}目录`));
+    message.error(errorMessage(error, t("clientPathDetectFailed", { label })));
   }
 }
 
@@ -466,12 +510,12 @@ function showDetails(addon: AddonInfo) {
 
 function statusLabel(status: AddonStatus) {
   const labels: Record<AddonStatus, string> = {
-    current: "已是最新",
-    update: "可更新",
-    untracked: "未关联",
-    checking: "检查中",
-    updating: "更新中",
-    error: "检查失败",
+    current: t("statusCurrent"),
+    update: t("statusUpdate"),
+    untracked: t("statusUntracked"),
+    checking: t("statusChecking"),
+    updating: t("statusUpdating"),
+    error: t("statusError"),
   };
   return labels[status];
 }
@@ -479,8 +523,8 @@ function statusLabel(status: AddonStatus) {
 function sourceLabel(source: AddonSource) {
   return {
     curseforge: "CurseForge",
-    wowinterface: "WoWInterface（一期未启用）",
-    unknown: "本地插件",
+    wowinterface: t("sourceWowInterface"),
+    unknown: t("sourceLocal"),
   }[source];
 }
 
@@ -493,14 +537,19 @@ function sourceMark(source: AddonSource) {
 }
 
 function formatRelativeTime(date: Date | null) {
-  if (!date) return "尚未执行";
-  return date.toLocaleTimeString("zh-CN", {
+  if (!date) return t("notPerformed");
+  return date.toLocaleTimeString(locale.value, {
     hour: "2-digit",
     minute: "2-digit",
   });
 }
 
+function displayValue(value: string | undefined, fallback: TranslationKey) {
+  return value?.trim() ? value : t(fallback);
+}
+
 function errorMessage(error: unknown, fallback: string) {
+  if (locale.value !== "zh-CN") return fallback;
   if (typeof error === "string") return error;
   if (error instanceof Error) return error.message;
   return fallback;
@@ -513,10 +562,22 @@ onMounted(async () => {
     await runUpdateCheck();
   }
 });
+
+watch(
+  locale,
+  (value) => {
+    document.documentElement.lang = value;
+  },
+  { immediate: true },
+);
 </script>
 
 <template>
-  <n-config-provider :theme-overrides="themeOverrides">
+  <n-config-provider
+    :theme-overrides="themeOverrides"
+    :locale="naiveLocale"
+    :date-locale="naiveDateLocale"
+  >
     <n-message-provider>
       <div class="app-shell">
         <aside class="sidebar">
@@ -527,11 +588,11 @@ onMounted(async () => {
             </div>
             <div>
               <div class="brand-name">WowBox</div>
-              <div class="brand-caption">插件管理器</div>
+              <div class="brand-caption">{{ t("addonManager") }}</div>
             </div>
           </div>
 
-          <div class="sidebar-section-label">游戏版本</div>
+          <div class="sidebar-section-label">{{ t("gameVersions") }}</div>
           <div v-if="loadingInstallations" class="sidebar-skeleton">
             <n-skeleton v-for="item in 3" :key="item" height="56px" round />
           </div>
@@ -548,8 +609,8 @@ onMounted(async () => {
                 <ShieldCheck :size="18" :stroke-width="1.9" />
               </span>
               <span class="game-meta">
-                <strong>{{ installation.label }}</strong>
-                <small>{{ installation.addonCount }} 个插件</small>
+                <strong>{{ gameFlavorLabel(installation.flavor) }}</strong>
+                <small>{{ t("addonCount", { count: installation.addonCount }) }}</small>
               </span>
               <ChevronRight class="nav-chevron" :size="16" />
             </button>
@@ -557,9 +618,9 @@ onMounted(async () => {
 
           <div v-if="!loadingInstallations && !installations.length" class="no-game">
             <FolderSearch :size="22" />
-            <span>未找到游戏客户端</span>
+            <span>{{ t("noGameClient") }}</span>
             <button type="button" @click="openSettings">
-              手动选择
+              {{ t("manualSelect") }}
             </button>
           </div>
 
@@ -567,7 +628,7 @@ onMounted(async () => {
 
           <button class="sidebar-settings" type="button" @click="openSettings">
             <Settings2 :size="18" />
-            <span>设置</span>
+            <span>{{ t("settings") }}</span>
           </button>
         </aside>
 
@@ -576,9 +637,9 @@ onMounted(async () => {
             <div class="topbar-title">
               <div class="eyebrow">
                 <span class="online-dot" />
-                国服客户端
+                {{ t("wowClient") }}
               </div>
-              <h1>{{ activeInstallation?.label ?? "插件管理" }}</h1>
+              <h1>{{ activeInstallation ? gameFlavorLabel(activeInstallation.flavor) : t("addonManager") }}</h1>
             </div>
             <div class="topbar-actions">
               <n-tooltip trigger="hover">
@@ -588,13 +649,13 @@ onMounted(async () => {
                     circle
                     :loading="scanning"
                     :disabled="!activeInstallation"
-                    aria-label="重新扫描"
+                    :aria-label="t('rescan')"
                     @click="runScan()"
                   >
                     <template #icon><RefreshCw :size="18" /></template>
                   </n-button>
                 </template>
-                重新扫描插件目录
+                {{ t("rescanAddonFolder") }}
               </n-tooltip>
               <n-button
                 secondary
@@ -603,7 +664,7 @@ onMounted(async () => {
                 @click="runUpdateCheck"
               >
                 <template #icon><Sparkles :size="17" /></template>
-                检查更新
+                {{ t("checkUpdates") }}
               </n-button>
               <n-button
                 type="primary"
@@ -612,7 +673,7 @@ onMounted(async () => {
                 @click="updateAll"
               >
                 <template #icon><Download :size="17" /></template>
-                全部更新
+                {{ t("updateAll") }}
                 <span v-if="updateCount" class="button-count">{{ updateCount }}</span>
               </n-button>
             </div>
@@ -625,27 +686,27 @@ onMounted(async () => {
                   <Puzzle :size="21" />
                 </div>
                 <div>
-                  <span>已安装插件</span>
+                  <span>{{ t("installedAddons") }}</span>
                   <strong>{{ addons.length }}</strong>
                 </div>
-                <small>扫描于 {{ formatRelativeTime(scanCompletedAt) }}</small>
+                <small>{{ t("scannedAt", { time: formatRelativeTime(scanCompletedAt) }) }}</small>
               </article>
               <article class="summary-card">
                 <div class="summary-icon coral">
                   <Download :size="21" />
                 </div>
                 <div>
-                  <span>可用更新</span>
+                  <span>{{ t("updatesAvailable") }}</span>
                   <strong>{{ updateCount }}</strong>
                 </div>
-                <small>{{ checkedAt ? `${formatRelativeTime(checkedAt)} 已检查` : "等待检查" }}</small>
+                <small>{{ checkedAt ? t("checkedAt", { time: formatRelativeTime(checkedAt) }) : t("waitingForCheck") }}</small>
               </article>
               <article class="summary-card">
                 <div class="summary-icon mint">
                   <HardDrive :size="21" />
                 </div>
                 <div>
-                  <span>当前目录</span>
+                  <span>{{ t("currentDirectory") }}</span>
                   <strong class="folder-value">{{ activeInstallation?.productFolder ?? "—" }}</strong>
                 </div>
                 <n-tooltip v-if="activeInstallation" trigger="hover">
@@ -654,21 +715,21 @@ onMounted(async () => {
                   </template>
                   {{ activeInstallation.addonsPath }}
                 </n-tooltip>
-                <small v-else>请先选择游戏目录</small>
+                <small v-else>{{ t("chooseGameDirectory") }}</small>
               </article>
             </section>
 
             <section class="addons-panel">
               <div class="panel-toolbar">
                 <div>
-                  <h2>我的插件</h2>
-                  <p>管理已安装内容和更新来源</p>
+                  <h2>{{ t("myAddons") }}</h2>
+                  <p>{{ t("manageAddons") }}</p>
                 </div>
                 <div class="toolbar-controls">
                   <n-input
                     v-model:value="searchTerm"
                     clearable
-                    placeholder="搜索插件、作者…"
+                    :placeholder="t('searchAddons')"
                     class="search-input"
                   >
                     <template #prefix><Search :size="17" /></template>
@@ -683,10 +744,10 @@ onMounted(async () => {
               </div>
 
               <div class="table-header">
-                <span>插件</span>
-                <span>来源</span>
-                <span>本地版本</span>
-                <span>状态</span>
+                <span>{{ t("addon") }}</span>
+                <span>{{ t("source") }}</span>
+                <span>{{ t("localVersion") }}</span>
+                <span>{{ t("status") }}</span>
                 <span />
               </div>
 
@@ -719,7 +780,7 @@ onMounted(async () => {
                       <div class="addon-title-line">
                         <strong>{{ addon.title }}</strong>
                         <n-tag
-                          v-if="addon.interfaceVersion && addon.interfaceVersion !== '未知'"
+                          v-if="addon.interfaceVersion"
                           size="tiny"
                           :bordered="false"
                           class="interface-tag"
@@ -727,7 +788,7 @@ onMounted(async () => {
                           {{ addon.interfaceVersion }}
                         </n-tag>
                       </div>
-                      <p>{{ addon.notes || `由 ${addon.author || "未知作者"} 创建` }}</p>
+                      <p>{{ addon.notes || t("createdBy", { author: displayValue(addon.author, "unknownAuthor") }) }}</p>
                     </div>
                   </div>
 
@@ -739,7 +800,7 @@ onMounted(async () => {
                   </div>
 
                   <div class="version-cell">
-                    <span>{{ addon.version || "未知" }}</span>
+                    <span>{{ displayValue(addon.version, "unknown") }}</span>
                     <small v-if="addon.status === 'update'">
                       → {{ addon.latestVersion }}
                     </small>
@@ -765,7 +826,7 @@ onMounted(async () => {
                       size="small"
                       @click="updateOne(addon)"
                     >
-                      更新
+                      {{ t("update") }}
                     </n-button>
                     <n-button
                       v-else
@@ -773,7 +834,7 @@ onMounted(async () => {
                       size="small"
                       @click="showDetails(addon)"
                     >
-                      详情
+                      {{ t("details") }}
                     </n-button>
                   </div>
                 </article>
@@ -783,23 +844,23 @@ onMounted(async () => {
                 v-else
                 class="empty-state"
                 :description="
-                  addons.length ? '没有符合筛选条件的插件' : '这个版本还没有扫描到插件'
+                  addons.length ? t('noMatchingAddons') : t('noAddonsFound')
                 "
               >
                 <template #icon><Puzzle :size="42" :stroke-width="1.3" /></template>
                 <template #extra>
                   <n-button v-if="activeInstallation" secondary @click="runScan()">
-                    重新扫描
+                    {{ t("rescan") }}
                   </n-button>
                   <n-button v-else type="primary" @click="openSettings">
-                    选择游戏目录
+                    {{ t("select") }}
                   </n-button>
                 </template>
               </n-empty>
             </section>
 
             <footer class="content-footer">
-              <span><ShieldCheck :size="14" /> 所有操作均在本机完成</span>
+              <span><ShieldCheck :size="14" /> {{ t("localOnly") }}</span>
               <span>WowBox 0.1.0</span>
             </footer>
           </div>
@@ -808,7 +869,7 @@ onMounted(async () => {
         <n-modal
           v-model:show="settingsVisible"
           preset="card"
-          title="设置"
+          :title="t('settings')"
           class="settings-modal"
           :bordered="false"
           :mask-closable="false"
@@ -816,26 +877,44 @@ onMounted(async () => {
         >
           <div class="settings-section">
             <div class="settings-section-title">
-              <FolderOpen :size="18" />
+              <Settings2 :size="18" />
               <div>
-                <strong>游戏目录</strong>
-                <span>自动识别目录中的多个客户端版本</span>
+                <strong>{{ t("language") }}</strong>
+                <span>{{ t("languageHelp") }}</span>
               </div>
             </div>
-            <n-form-item label="World of Warcraft 根目录">
+            <n-form-item :label="t('language')">
+              <n-select
+                v-model:value="settingsDraft.language"
+                :options="languageOptions"
+              />
+            </n-form-item>
+          </div>
+
+          <div class="settings-divider" />
+
+          <div class="settings-section">
+            <div class="settings-section-title">
+              <FolderOpen :size="18" />
+              <div>
+                <strong>{{ t("gameDirectory") }}</strong>
+                <span>{{ t("gameDirectoryHelp") }}</span>
+              </div>
+            </div>
+            <n-form-item :label="t('gameRoot')">
               <div class="path-picker">
                 <n-input
                   v-model:value="settingsDraft.gameRoot"
                   readonly
-                  placeholder="留空则自动检测"
+                  :placeholder="t('blankAutoDetect')"
                 />
-                <n-button secondary @click="selectGameRoot">选择</n-button>
+                <n-button secondary @click="selectGameRoot">{{ t("select") }}</n-button>
                 <n-button
                   v-if="settingsDraft.gameRoot"
                   quaternary
                   @click="settingsDraft.gameRoot = ''"
                 >
-                  自动
+                  {{ t("auto") }}
                 </n-button>
               </div>
             </n-form-item>
@@ -846,8 +925,8 @@ onMounted(async () => {
               <n-collapse-item name="client-paths">
                 <template #header>
                   <div class="client-paths-heading">
-                    <strong>按版本指定客户端目录</strong>
-                    <span>默认收起；展开后可覆盖自动检测路径。</span>
+                    <strong>{{ t("clientPaths") }}</strong>
+                    <span>{{ t("clientPathsHelp") }}</span>
                   </div>
                 </template>
                 <div class="client-path-list">
@@ -864,14 +943,14 @@ onMounted(async () => {
                       <n-input
                         :value="settingsDraft.clientPaths[option.flavor]"
                         readonly
-                        placeholder="使用自动检测路径"
+                        :placeholder="t('autoDetectedPath')"
                       />
                       <n-button
                         secondary
                         size="small"
                         @click="selectClientPath(option.flavor, option.label)"
                       >
-                        选择
+                        {{ t("select") }}
                       </n-button>
                       <n-button
                         v-if="settingsDraft.clientPaths[option.flavor]"
@@ -879,7 +958,7 @@ onMounted(async () => {
                         size="small"
                         @click="clearClientPath(option.flavor)"
                       >
-                        清除
+                        {{ t("clear") }}
                       </n-button>
                     </div>
                   </div>
@@ -894,11 +973,11 @@ onMounted(async () => {
             <div class="settings-section-title">
               <ShieldCheck :size="18" />
               <div>
-                <strong>插件信息数据源</strong>
-                <span>一期使用 CurseForge REST API，后续可扩展其他来源。</span>
+                <strong>{{ t("dataSources") }}</strong>
+                <span>{{ t("dataSourcesHelp") }}</span>
               </div>
             </div>
-            <n-form-item label="数据源">
+            <n-form-item :label="t('source')">
               <n-select
                 v-model:value="settingsDraft.pluginDataSource"
                 :options="pluginDataSourceOptions"
@@ -906,18 +985,18 @@ onMounted(async () => {
             </n-form-item>
             <n-form-item
               v-if="settingsDraft.pluginDataSource === 'curseforge'"
-              label="个人 CurseForge API Key（可选）"
+              :label="t('personalApiKey')"
             >
               <n-input
                 v-model:value="settingsDraft.curseforgeApiKey"
                 :type="apiKeyVisible ? 'text' : 'password'"
-                placeholder="留空使用应用默认 x-api-key"
+                :placeholder="t('defaultApiKey')"
               >
                 <template #suffix>
                   <button
                     class="input-icon-button"
                     type="button"
-                    :aria-label="apiKeyVisible ? '隐藏密钥' : '显示密钥'"
+                    :aria-label="apiKeyVisible ? t('hideKey') : t('showKey')"
                     @click="apiKeyVisible = !apiKeyVisible"
                   >
                     <EyeOff v-if="apiKeyVisible" :size="16" />
@@ -931,15 +1010,15 @@ onMounted(async () => {
               class="setting-toggle"
             >
               <div>
-                <strong>记住个人 API Key</strong>
-                <span>仅在填写个人 Key 时以明文保存到当前设备；共享设备请关闭</span>
+                <strong>{{ t("rememberKey") }}</strong>
+                <span>{{ t("rememberKeyHelp") }}</span>
               </div>
               <n-switch v-model:value="settingsDraft.rememberApiKey" />
             </div>
             <div class="setting-toggle">
               <div>
-                <strong>启动时检查更新</strong>
-                <span>扫描完成后自动查询已关联的插件</span>
+                <strong>{{ t("checkOnLaunch") }}</strong>
+                <span>{{ t("checkOnLaunchHelp") }}</span>
               </div>
               <n-switch v-model:value="settingsDraft.checkOnLaunch" />
             </div>
@@ -947,15 +1026,15 @@ onMounted(async () => {
 
           <div class="privacy-note">
             <Info :size="16" />
-            <span>WowBox 不上传插件列表、游戏路径或任何账号信息。</span>
+            <span>{{ t("privacy") }}</span>
           </div>
 
           <template #footer>
             <div class="modal-footer">
-              <n-button @click="cancelSettings">取消</n-button>
+              <n-button @click="cancelSettings">{{ t("cancel") }}</n-button>
               <n-button type="primary" @click="saveSettings">
                 <template #icon><Check :size="16" /></template>
-                保存设置
+                {{ t("saveSettings") }}
               </n-button>
             </div>
           </template>
@@ -966,7 +1045,7 @@ onMounted(async () => {
           preset="card"
           class="details-modal"
           :bordered="false"
-          title="插件详情"
+          :title="t('addonDetails')"
         >
           <div v-if="selectedAddon" class="details-content">
             <div class="details-hero">
@@ -975,24 +1054,24 @@ onMounted(async () => {
               </div>
               <div>
                 <h3>{{ selectedAddon.title }}</h3>
-                <p>{{ selectedAddon.notes || "暂无插件描述" }}</p>
+                <p>{{ selectedAddon.notes || t("noDescription") }}</p>
               </div>
             </div>
             <dl class="details-grid">
-              <div><dt>作者</dt><dd>{{ selectedAddon.author || "未知" }}</dd></div>
-              <div><dt>来源</dt><dd>{{ sourceLabel(selectedAddon.source) }}</dd></div>
-              <div><dt>本地版本</dt><dd>{{ selectedAddon.version || "未知" }}</dd></div>
-              <div><dt>最新版本</dt><dd>{{ selectedAddon.latestVersion || "尚未检查" }}</dd></div>
-              <div><dt>Interface</dt><dd>{{ selectedAddon.interfaceVersion || "未知" }}</dd></div>
-              <div><dt>目录数量</dt><dd>{{ selectedAddon.folders.length }}</dd></div>
+              <div><dt>{{ t("author") }}</dt><dd>{{ displayValue(selectedAddon.author, "unknown") }}</dd></div>
+              <div><dt>{{ t("source") }}</dt><dd>{{ sourceLabel(selectedAddon.source) }}</dd></div>
+              <div><dt>{{ t("localVersion") }}</dt><dd>{{ displayValue(selectedAddon.version, "unknown") }}</dd></div>
+              <div><dt>{{ t("latestVersion") }}</dt><dd>{{ selectedAddon.latestVersion || t("notChecked") }}</dd></div>
+              <div><dt>{{ t("interface") }}</dt><dd>{{ displayValue(selectedAddon.interfaceVersion, "unknown") }}</dd></div>
+              <div><dt>{{ t("folderCount") }}</dt><dd>{{ selectedAddon.folders.length }}</dd></div>
             </dl>
             <div class="folder-list">
-              <span>包含目录</span>
+              <span>{{ t("folders") }}</span>
               <code v-for="folder in selectedAddon.folders" :key="folder">{{ folder }}</code>
             </div>
             <div v-if="selectedAddon.error" class="error-note">
               <AlertCircle :size="16" />
-              {{ selectedAddon.error }}
+              {{ errorMessage(selectedAddon.error, t("checkUpdatesFailed")) }}
             </div>
           </div>
         </n-modal>

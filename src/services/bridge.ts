@@ -27,12 +27,13 @@ export async function detectInstallations(
 export async function scanAddons(
   addonsPath: string,
   flavor: string,
+  locale: string,
 ): Promise<AddonInfo[]> {
   if (!inTauri()) {
     await delay(650);
     return mockAddons.map((addon) => ({ ...addon }));
   }
-  return invoke<AddonInfo[]>("scan_addons", { addonsPath, flavor });
+  return invoke<AddonInfo[]>("scan_addons", { addonsPath, flavor, locale });
 }
 
 export async function checkAddonUpdates(
