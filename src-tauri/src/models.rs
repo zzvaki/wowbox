@@ -85,7 +85,6 @@ impl UpdateCheckResult {
 pub struct UpdateRequest {
     pub addon: AddonInfo,
     pub download_url: String,
-    pub api_key: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

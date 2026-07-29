@@ -9,7 +9,7 @@ export type GameFlavor =
   | "beta";
 
 export type AddonSource = "curseforge" | "wowinterface" | "unknown";
-export type PluginDataSource = "curseforge";
+export type PluginDataSource = "curseforge" | "wowinterface";
 export type AddonStatus =
   | "current"
   | "update"
@@ -65,7 +65,6 @@ export interface UpdateCheckResult {
 export interface UpdateRequest {
   addon: AddonInfo;
   downloadUrl: string;
-  apiKey?: string;
 }
 
 export interface UpdateResult {

@@ -124,13 +124,12 @@ const clientPathOptions: Array<{
 
 const pluginDataSourceOptions = [
   {
-    label: "CurseForge",
+    label: "CurseForge（已启用）",
     value: "curseforge" satisfies PluginDataSource,
   },
   {
-    label: "WoWInterface（即将支持）",
-    value: "wowinterface",
-    disabled: true,
+    label: "WoWInterface（开发中）",
+    value: "wowinterface" satisfies PluginDataSource,
   },
 ];
 
@@ -222,6 +221,7 @@ function configuredGamePaths(value: AppSettings) {
 function openSettings() {
   settingsDraft.value = cloneSettings(settings.value);
   expandedSettings.value = [];
+  apiKeyVisible.value = false;
   settingsVisible.value = true;
 }
 
@@ -347,6 +347,10 @@ async function runScan(showNotice = true) {
 
 async function runUpdateCheck() {
   if (!activeInstallation.value || !addons.value.length || checking.value) return;
+  if (settings.value.pluginDataSource !== "curseforge") {
+    message.info("WoWInterface 数据源正在开发中；一期请切换为 CurseForge 后检查更新。");
+    return;
+  }
   checking.value = true;
   addons.value = addons.value.map((addon) => ({
     ...addon,
@@ -400,10 +404,6 @@ async function updateOne(addon: AddonInfo, quiet = false) {
     const result = await installAddonUpdate({
       addon,
       downloadUrl: addon.latestDownloadUrl,
-      apiKey:
-        addon.source === "curseforge"
-          ? settings.value.curseforgeApiKey
-          : undefined,
     });
     addon.version = result.version;
     addon.status = "current";
@@ -904,7 +904,10 @@ onMounted(async () => {
                 :options="pluginDataSourceOptions"
               />
             </n-form-item>
-            <n-form-item label="个人 CurseForge API Key（可选）">
+            <n-form-item
+              v-if="settingsDraft.pluginDataSource === 'curseforge'"
+              label="个人 CurseForge API Key（可选）"
+            >
               <n-input
                 v-model:value="settingsDraft.curseforgeApiKey"
                 :type="apiKeyVisible ? 'text' : 'password'"
@@ -923,10 +926,13 @@ onMounted(async () => {
                 </template>
               </n-input>
             </n-form-item>
-            <div class="setting-toggle">
+            <div
+              v-if="settingsDraft.pluginDataSource === 'curseforge'"
+              class="setting-toggle"
+            >
               <div>
                 <strong>记住个人 API Key</strong>
-                <span>仅在填写个人 Key 时保存到当前设备</span>
+                <span>仅在填写个人 Key 时以明文保存到当前设备；共享设备请关闭</span>
               </div>
               <n-switch v-model:value="settingsDraft.rememberApiKey" />
             </div>

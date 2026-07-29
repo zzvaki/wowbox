@@ -1,7 +1,4 @@
-use crate::{
-    models::{UpdateRequest, UpdateResult},
-    provider_config::curseforge_api_key,
-};
+use crate::models::{UpdateRequest, UpdateResult};
 use chrono::Utc;
 use reqwest::Client;
 use std::{
@@ -25,18 +22,18 @@ pub async fn update_addon(
         return Err(format!("插件根目录不存在：{}", addons_root.display()));
     }
     validate_update_target(&request, &addons_root)?;
+    validate_download_url(&request.download_url)?;
 
     let client = Client::builder()
         .user_agent(format!("WowBox/{}", env!("CARGO_PKG_VERSION")))
+        .redirect(reqwest::redirect::Policy::none())
         .build()
         .map_err(|error| format!("无法初始化下载器：{error}"))?;
-    let mut download = client.get(&request.download_url);
-    if request.addon.source == "curseforge" {
-        let api_key = curseforge_api_key(request.api_key.as_deref())
-            .ok_or_else(|| "下载 CurseForge 文件需要 API Key。".to_string())?;
-        download = download.header("x-api-key", api_key);
-    }
-    let response = download
+    // CurseForge's REST API key is only used for API queries. The returned
+    // CDN archive URL is public, so never forward either the built-in key or
+    // a user key to the download host.
+    let response = client
+        .get(&request.download_url)
         .send()
         .await
         .map_err(|error| format!("下载插件失败：{error}"))?
@@ -222,6 +219,19 @@ fn validate_update_target(request: &UpdateRequest, addons_root: &Path) -> Result
         .map_err(|error| format!("无法确认插件路径：{error}"))?;
     if expected_path != provided_path {
         return Err("插件路径与已扫描目录不一致，已取消更新。".into());
+    }
+    Ok(())
+}
+
+fn validate_download_url(download_url: &str) -> Result<(), String> {
+    let url = reqwest::Url::parse(download_url)
+        .map_err(|_| "插件下载地址无效，已取消更新。".to_string())?;
+    let host = url
+        .host_str()
+        .map(|host| host.trim_end_matches('.').to_ascii_lowercase())
+        .ok_or_else(|| "插件下载地址缺少主机名，已取消更新。".to_string())?;
+    if url.scheme() != "https" || !(host == "forgecdn.net" || host.ends_with(".forgecdn.net")) {
+        return Err("插件下载地址不是受信任的 CurseForge CDN，已取消更新。".into());
     }
     Ok(())
 }

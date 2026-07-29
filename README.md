@@ -47,14 +47,16 @@ pnpm tauri build
 
 一期数据源为 CurseForge。应用会调用其 REST API 的项目与文件接口，补全插件名称、简介、官方网站、最新版本与下载地址。
 
-默认 `x-api-key` 在构建时从原生进程环境变量 `CURSEFORGE_API_KEY` 注入，不会显示或传递到 WebView。构建前可执行：
+默认 `x-api-key` 从原生进程的 `CURSEFORGE_API_KEY` 读取：开发时可由启动环境提供，打包时会注入二进制。它不会显示或传递到 WebView。构建前可执行：
 
 ```bash
 export CURSEFORGE_API_KEY='your-key'
 pnpm tauri build
 ```
 
-用户也可以在“设置 → 插件信息数据源”中填写个人 Key；个人 Key 优先于默认 Key，且仅在开启“记住个人 API Key”后保存到本机。桌面应用中的构建期 Key 不能视为不可提取的机密，建议使用可轮换、权限受限的 Key。
+用户也可以在“设置 → 插件信息数据源”中填写个人 Key；个人 Key 优先于默认 Key，且仅在开启“记住个人 API Key”后以明文保存到本机。下载文件时不会向 CurseForge CDN 发送任何 API Key。桌面应用中的构建期 Key 不能视为不可提取的机密，建议使用可轮换、权限受限的 Key。
+
+数据源选择器已为 WoWInterface 预留入口；一期仅启用 CurseForge，选择 WoWInterface 时会提示其仍在开发中。
 
 ## 本地目录与备份
 

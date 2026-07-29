@@ -16,8 +16,12 @@ pub async fn check_updates(
     provider: String,
     user_curseforge_api_key: Option<String>,
 ) -> Result<Vec<UpdateCheckResult>, String> {
-    if provider != "curseforge" {
-        return Err("当前版本仅支持 CurseForge 数据源。".into());
+    match provider.as_str() {
+        "curseforge" => {}
+        "wowinterface" => {
+            return Err("WoWInterface 数据源正在开发中；一期请使用 CurseForge。".into())
+        }
+        _ => return Err("不支持的数据源。".into()),
     }
     let api_key = curseforge_api_key(user_curseforge_api_key.as_deref()).ok_or_else(|| {
         "未配置 CurseForge API Key。请填写个人 Key，或在构建时提供默认 Key。".to_string()
