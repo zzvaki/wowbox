@@ -1,0 +1,12 @@
+node_modules
+.pnpm-store
+dist
+.DS_Store
+*.log
+
+src-tauri/target
+src-tauri/gen
+
+.idea
+.vscode/*
+!.vscode/extensions.json
