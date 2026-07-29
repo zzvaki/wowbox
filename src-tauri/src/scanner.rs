@@ -11,7 +11,7 @@ const PRODUCT_FOLDERS: [(&str, &str, &str); 9] = [
     ("_classic_", "classic", "经典进度服"),
     ("_classic_era_", "classic_era", "经典旧世"),
     ("_anniversary_", "classic_anniversary", "周年纪念服"),
-    ("_classic_titan_", "classic_titan", "经典服（Titan）"),
+    ("_classic_titan_", "classic_titan", "泰坦重铸时光服"),
     // Retained for older installations created before the current folder layout.
     ("_classic_anniversary_", "classic_anniversary", "周年纪念服"),
     ("_ptr_", "ptr", "测试服"),
