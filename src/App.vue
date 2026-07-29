@@ -10,7 +10,6 @@ import {
   NInput,
   NMessageProvider,
   NModal,
-  NProgress,
   NSelect,
   NSkeleton,
   NSwitch,
@@ -33,7 +32,6 @@ import {
   HardDrive,
   Info,
   LoaderCircle,
-  PackageCheck,
   Puzzle,
   RefreshCw,
   Search,
@@ -194,11 +192,6 @@ const filterOptions = computed(() => [
     value: "untracked",
   },
 ]);
-
-const progressPercentage = computed(() => {
-  if (!addons.value.length) return 0;
-  return Math.round((currentCount.value / addons.value.length) * 100);
-});
 
 function loadSettings() {
   try {
@@ -571,24 +564,6 @@ onMounted(async () => {
           </div>
 
           <div class="sidebar-spacer" />
-
-          <div class="health-card">
-            <div class="health-top">
-              <span class="health-icon"><PackageCheck :size="18" /></span>
-              <span>插件健康度</span>
-              <strong>{{ progressPercentage }}%</strong>
-            </div>
-            <n-progress
-              type="line"
-              :percentage="progressPercentage"
-              :show-indicator="false"
-              :height="5"
-              color="#6e7bf7"
-              rail-color="#e8eaf6"
-              border-radius="4px"
-            />
-            <p>{{ updateCount ? `${updateCount} 个插件可以更新` : "一切都井井有条" }}</p>
-          </div>
 
           <button class="sidebar-settings" type="button" @click="openSettings">
             <Settings2 :size="18" />
