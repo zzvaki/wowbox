@@ -29,6 +29,12 @@ pub fn detect_installations(custom_root: Option<String>) -> Result<Vec<GameInsta
     if is_addons_directory(&root) {
         return Ok(vec![installation_from_addons_path(&root)]);
     }
+    if is_product_directory(&root) {
+        let addons_path = root.join("Interface").join("AddOns");
+        if addons_path.is_dir() {
+            return Ok(vec![installation_from_addons_path(&addons_path)]);
+        }
+    }
 
     let normalized_root = normalize_wow_root(root);
     let mut installations = Vec::new();
@@ -198,15 +204,17 @@ fn candidate_roots(custom_root: Option<String>) -> Vec<PathBuf> {
 }
 
 fn normalize_wow_root(path: PathBuf) -> PathBuf {
-    let is_product_folder = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .is_some_and(|name| PRODUCT_FOLDERS.iter().any(|item| item.0 == name));
-    if is_product_folder {
+    if is_product_directory(&path) {
         path.parent().map(Path::to_path_buf).unwrap_or(path)
     } else {
         path
     }
+}
+
+fn is_product_directory(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| PRODUCT_FOLDERS.iter().any(|item| item.0 == name))
 }
 
 fn is_addons_directory(path: &Path) -> bool {
@@ -395,6 +403,34 @@ mod tests {
         assert!(installations.iter().any(|item| {
             item.product_folder == "_classic_titan_" && item.flavor == "classic_titan"
         }));
+    }
+
+    #[test]
+    fn detects_only_the_selected_client_product_folder() {
+        let temporary_directory = tempdir().expect("create temporary directory");
+        for product_folder in ["_classic_", "_classic_era_"] {
+            fs::create_dir_all(
+                temporary_directory
+                    .path()
+                    .join(product_folder)
+                    .join("Interface")
+                    .join("AddOns"),
+            )
+            .expect("create client AddOns directory");
+        }
+
+        let installations = detect_installations(Some(
+            temporary_directory
+                .path()
+                .join("_classic_")
+                .to_string_lossy()
+                .into_owned(),
+        ))
+        .expect("detect selected client directory");
+
+        assert_eq!(installations.len(), 1);
+        assert_eq!(installations[0].flavor, "classic");
+        assert_eq!(installations[0].product_folder, "_classic_");
     }
 
     #[test]

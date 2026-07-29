@@ -140,6 +140,27 @@ async fn choose_game_root(
 }
 
 #[tauri::command]
+fn sync_authorized_game_roots(
+    app: tauri::AppHandle,
+    configured_paths: Vec<String>,
+    authorized_game_roots: State<'_, AuthorizedGameRoots>,
+) -> Result<(), String> {
+    let mut roots = authorized_game_roots
+        .0
+        .lock()
+        .map_err(|_| "游戏目录状态不可用。".to_string())?;
+    let retained_roots: HashSet<PathBuf> = configured_paths
+        .into_iter()
+        .filter(|path| !path.trim().is_empty())
+        .filter_map(|path| std::fs::canonicalize(path).ok())
+        .filter(|path| roots.contains(path))
+        .collect();
+    *roots = retained_roots.clone();
+    drop(roots);
+    persist_authorized_game_roots(&app, &retained_roots)
+}
+
+#[tauri::command]
 fn scan_addons(
     addons_path: String,
     flavor: String,
@@ -201,6 +222,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             detect_installations,
             choose_game_root,
+            sync_authorized_game_roots,
             scan_addons,
             check_updates,
             update_addon

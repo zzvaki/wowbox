@@ -72,3 +72,8 @@ export async function chooseGameRoot(): Promise<string | null> {
   }
   return invoke<string | null>("choose_game_root");
 }
+
+export async function syncAuthorizedGameRoots(paths: string[]): Promise<void> {
+  if (!inTauri()) return;
+  await invoke("sync_authorized_game_roots", { configuredPaths: paths });
+}

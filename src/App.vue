@@ -45,6 +45,7 @@ import {
   detectInstallations,
   installAddonUpdate,
   scanAddons,
+  syncAuthorizedGameRoots,
 } from "@/services/bridge";
 import type {
   AddonInfo,
@@ -89,6 +90,13 @@ const defaultSettings: AppSettings = {
   checkOnLaunch: false,
 };
 
+function cloneSettings(value: AppSettings): AppSettings {
+  return {
+    ...value,
+    clientPaths: { ...value.clientPaths },
+  };
+}
+
 const clientPathOptions: Array<{
   flavor: GameFlavor;
   label: string;
@@ -125,7 +133,8 @@ const settingsVisible = ref(false);
 const detailsVisible = ref(false);
 const selectedAddon = ref<AddonInfo | null>(null);
 const apiKeyVisible = ref(false);
-const settings = ref<AppSettings>({ ...defaultSettings });
+const settings = ref<AppSettings>(cloneSettings(defaultSettings));
+const settingsDraft = ref<AppSettings>(cloneSettings(defaultSettings));
 const scanCompletedAt = ref<Date | null>(null);
 const checkedAt = ref<Date | null>(null);
 
@@ -187,30 +196,59 @@ function loadSettings() {
         ? (stored.curseforgeApiKey ?? "")
         : "",
     };
+    settingsDraft.value = cloneSettings(settings.value);
   } catch {
     localStorage.removeItem("wowbox:settings");
   }
 }
 
-function saveSettings() {
+function configuredGamePaths(value: AppSettings) {
+  return [value.gameRoot, ...Object.values(value.clientPaths)].filter(
+    (path): path is string => Boolean(path?.trim()),
+  );
+}
+
+function openSettings() {
+  settingsDraft.value = cloneSettings(settings.value);
+  settingsVisible.value = true;
+}
+
+async function saveSettings() {
+  const nextSettings = cloneSettings(settingsDraft.value);
+  try {
+    await syncAuthorizedGameRoots(configuredGamePaths(nextSettings));
+  } catch (error) {
+    message.error(errorMessage(error, "无法保存游戏目录授权"));
+    return;
+  }
   const stored = {
-    ...settings.value,
-    curseforgeApiKey: settings.value.rememberApiKey
-      ? settings.value.curseforgeApiKey
+    ...nextSettings,
+    curseforgeApiKey: nextSettings.rememberApiKey
+      ? nextSettings.curseforgeApiKey
       : "",
   };
   localStorage.setItem("wowbox:settings", JSON.stringify(stored));
+  settings.value = nextSettings;
   settingsVisible.value = false;
   message.success("设置已保存");
-  void refreshInstallations();
+  await refreshInstallations();
+}
+
+async function cancelSettings() {
+  try {
+    await syncAuthorizedGameRoots(configuredGamePaths(settings.value));
+  } catch (error) {
+    message.error(errorMessage(error, "无法还原游戏目录授权"));
+    return;
+  }
+  settingsDraft.value = cloneSettings(settings.value);
+  settingsVisible.value = false;
 }
 
 async function refreshInstallations() {
   loadingInstallations.value = true;
   try {
-    const configuredPaths = Object.values(settings.value.clientPaths).filter(
-      (path): path is string => Boolean(path?.trim()),
-    );
+    const configuredPaths = configuredGamePaths(settings.value);
     const detectionPaths = Array.from(
       new Set(
         settings.value.gameRoot
@@ -382,7 +420,7 @@ async function updateAll() {
 
 async function selectGameRoot() {
   const path = await chooseGameRoot();
-  if (path) settings.value.gameRoot = path;
+  if (path) settingsDraft.value.gameRoot = path;
 }
 
 async function selectClientPath(flavor: GameFlavor, label: string) {
@@ -395,7 +433,7 @@ async function selectClientPath(flavor: GameFlavor, label: string) {
       message.warning(`所选目录中没有找到${label}客户端`);
       return;
     }
-    settings.value.clientPaths[flavor] = installation.path;
+    settingsDraft.value.clientPaths[flavor] = installation.path;
     message.success(`${label}路径已设置`);
   } catch (error) {
     message.error(errorMessage(error, `无法识别${label}目录`));
@@ -403,7 +441,7 @@ async function selectClientPath(flavor: GameFlavor, label: string) {
 }
 
 function clearClientPath(flavor: GameFlavor) {
-  delete settings.value.clientPaths[flavor];
+  delete settingsDraft.value.clientPaths[flavor];
 }
 
 function showDetails(addon: AddonInfo) {
@@ -505,7 +543,7 @@ onMounted(async () => {
           <div v-if="!loadingInstallations && !installations.length" class="no-game">
             <FolderSearch :size="22" />
             <span>未找到游戏客户端</span>
-            <button type="button" @click="settingsVisible = true">
+            <button type="button" @click="openSettings">
               手动选择
             </button>
           </div>
@@ -530,7 +568,7 @@ onMounted(async () => {
             <p>{{ updateCount ? `${updateCount} 个插件可以更新` : "一切都井井有条" }}</p>
           </div>
 
-          <button class="sidebar-settings" type="button" @click="settingsVisible = true">
+          <button class="sidebar-settings" type="button" @click="openSettings">
             <Settings2 :size="18" />
             <span>设置</span>
           </button>
@@ -756,7 +794,7 @@ onMounted(async () => {
                   <n-button v-if="activeInstallation" secondary @click="runScan()">
                     重新扫描
                   </n-button>
-                  <n-button v-else type="primary" @click="settingsVisible = true">
+                  <n-button v-else type="primary" @click="openSettings">
                     选择游戏目录
                   </n-button>
                 </template>
@@ -777,6 +815,7 @@ onMounted(async () => {
           class="settings-modal"
           :bordered="false"
           :mask-closable="false"
+          :close-on-esc="false"
         >
           <div class="settings-section">
             <div class="settings-section-title">
@@ -789,15 +828,15 @@ onMounted(async () => {
             <n-form-item label="World of Warcraft 根目录">
               <div class="path-picker">
                 <n-input
-                  v-model:value="settings.gameRoot"
+                  v-model:value="settingsDraft.gameRoot"
                   readonly
                   placeholder="留空则自动检测"
                 />
                 <n-button secondary @click="selectGameRoot">选择</n-button>
                 <n-button
-                  v-if="settings.gameRoot"
+                  v-if="settingsDraft.gameRoot"
                   quaternary
-                  @click="settings.gameRoot = ''"
+                  @click="settingsDraft.gameRoot = ''"
                 >
                   自动
                 </n-button>
@@ -819,7 +858,7 @@ onMounted(async () => {
                 </div>
                 <div class="client-path-picker">
                   <n-input
-                    :value="settings.clientPaths[option.flavor]"
+                    :value="settingsDraft.clientPaths[option.flavor]"
                     readonly
                     placeholder="使用自动检测路径"
                   />
@@ -831,7 +870,7 @@ onMounted(async () => {
                     选择
                   </n-button>
                   <n-button
-                    v-if="settings.clientPaths[option.flavor]"
+                    v-if="settingsDraft.clientPaths[option.flavor]"
                     quaternary
                     size="small"
                     @click="clearClientPath(option.flavor)"
@@ -855,7 +894,7 @@ onMounted(async () => {
             </div>
             <n-form-item label="CurseForge API Key">
               <n-input
-                v-model:value="settings.curseforgeApiKey"
+                v-model:value="settingsDraft.curseforgeApiKey"
                 :type="apiKeyVisible ? 'text' : 'password'"
                 placeholder="x-api-key"
               >
@@ -877,14 +916,14 @@ onMounted(async () => {
                 <strong>记住 API Key</strong>
                 <span>密钥只保存在当前设备的 WebView 存储中</span>
               </div>
-              <n-switch v-model:value="settings.rememberApiKey" />
+              <n-switch v-model:value="settingsDraft.rememberApiKey" />
             </div>
             <div class="setting-toggle">
               <div>
                 <strong>启动时检查更新</strong>
                 <span>扫描完成后自动查询已关联的插件</span>
               </div>
-              <n-switch v-model:value="settings.checkOnLaunch" />
+              <n-switch v-model:value="settingsDraft.checkOnLaunch" />
             </div>
           </div>
 
@@ -895,7 +934,7 @@ onMounted(async () => {
 
           <template #footer>
             <div class="modal-footer">
-              <n-button @click="settingsVisible = false">取消</n-button>
+              <n-button @click="cancelSettings">取消</n-button>
               <n-button type="primary" @click="saveSettings">
                 <template #icon><Check :size="16" /></template>
                 保存设置
