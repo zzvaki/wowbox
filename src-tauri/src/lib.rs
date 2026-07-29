@@ -5,9 +5,11 @@ mod updater;
 mod version;
 
 use models::{AddonInfo, GameInstallation, UpdateCheckResult, UpdateRequest, UpdateResult};
-use std::{collections::HashSet, path::PathBuf, sync::Mutex};
-use tauri::State;
+use std::{collections::HashSet, fs, path::PathBuf, sync::Mutex};
+use tauri::{Manager, State};
 use tauri_plugin_dialog::DialogExt;
+
+const AUTHORIZED_GAME_ROOTS_FILE: &str = "authorized-game-roots.json";
 
 #[derive(Default)]
 struct ManagedAddonRoots(Mutex<HashSet<PathBuf>>);
@@ -15,8 +17,47 @@ struct ManagedAddonRoots(Mutex<HashSet<PathBuf>>);
 #[derive(Default)]
 struct AuthorizedGameRoots(Mutex<HashSet<PathBuf>>);
 
+fn load_authorized_game_roots(app: &tauri::AppHandle) -> HashSet<PathBuf> {
+    let Ok(config_directory) = app.path().app_config_dir() else {
+        return HashSet::new();
+    };
+    let roots_path = config_directory.join(AUTHORIZED_GAME_ROOTS_FILE);
+    let Ok(contents) = fs::read(&roots_path) else {
+        return HashSet::new();
+    };
+    let Ok(saved_roots) = serde_json::from_slice::<Vec<String>>(&contents) else {
+        return HashSet::new();
+    };
+    saved_roots
+        .into_iter()
+        .filter_map(|root| fs::canonicalize(root).ok())
+        .collect()
+}
+
+fn persist_authorized_game_roots(
+    app: &tauri::AppHandle,
+    roots: &HashSet<PathBuf>,
+) -> Result<(), String> {
+    let config_directory = app
+        .path()
+        .app_config_dir()
+        .map_err(|error| format!("无法确定应用配置目录：{error}"))?;
+    fs::create_dir_all(&config_directory)
+        .map_err(|error| format!("无法创建应用配置目录：{error}"))?;
+    let mut saved_roots: Vec<String> = roots
+        .iter()
+        .map(|root| root.to_string_lossy().into_owned())
+        .collect();
+    saved_roots.sort_unstable();
+    let contents = serde_json::to_vec(&saved_roots)
+        .map_err(|error| format!("无法保存已授权游戏目录：{error}"))?;
+    fs::write(config_directory.join(AUTHORIZED_GAME_ROOTS_FILE), contents)
+        .map_err(|error| format!("无法写入已授权游戏目录：{error}"))
+}
+
 #[tauri::command]
 fn detect_installations(
+    app: tauri::AppHandle,
     custom_root: Option<String>,
     authorized_game_roots: State<'_, AuthorizedGameRoots>,
     managed_addon_roots: State<'_, ManagedAddonRoots>,
@@ -37,7 +78,25 @@ fn detect_installations(
         }
         None => None,
     };
+    let is_custom_root = custom_root.is_some();
     let installations = scanner::detect_installations(custom_root)?;
+    let persisted_roots = if is_custom_root {
+        let mut roots = authorized_game_roots
+            .0
+            .lock()
+            .map_err(|_| "游戏目录状态不可用。".to_string())?;
+        for installation in &installations {
+            let installation_root = std::fs::canonicalize(&installation.path)
+                .map_err(|error| format!("无法确认客户端目录：{error}"))?;
+            roots.insert(installation_root);
+        }
+        Some(roots.clone())
+    } else {
+        None
+    };
+    if let Some(roots) = persisted_roots {
+        persist_authorized_game_roots(&app, &roots)?;
+    }
     let mut roots = managed_addon_roots
         .0
         .lock()
@@ -68,11 +127,15 @@ async fn choose_game_root(
         .map_err(|error| format!("无法读取所选游戏目录：{error}"))?;
     let root =
         std::fs::canonicalize(root).map_err(|error| format!("无法确认所选游戏目录：{error}"))?;
-    authorized_game_roots
-        .0
-        .lock()
-        .map_err(|_| "游戏目录状态不可用。".to_string())?
-        .insert(root.clone());
+    let persisted_roots = {
+        let mut roots = authorized_game_roots
+            .0
+            .lock()
+            .map_err(|_| "游戏目录状态不可用。".to_string())?;
+        roots.insert(root.clone());
+        roots.clone()
+    };
+    persist_authorized_game_roots(&app, &persisted_roots)?;
     Ok(Some(root.to_string_lossy().into_owned()))
 }
 
@@ -129,8 +192,12 @@ async fn update_addon(
 pub fn run() {
     tauri::Builder::default()
         .manage(ManagedAddonRoots::default())
-        .manage(AuthorizedGameRoots::default())
         .plugin(tauri_plugin_dialog::init())
+        .setup(|app| {
+            let authorized_roots = load_authorized_game_roots(app.handle());
+            app.manage(AuthorizedGameRoots(Mutex::new(authorized_roots)));
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             detect_installations,
             choose_game_root,

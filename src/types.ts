@@ -74,6 +74,7 @@ export interface UpdateResult {
 
 export interface AppSettings {
   gameRoot: string;
+  clientPaths: Partial<Record<GameFlavor, string>>;
   curseforgeApiKey: string;
   rememberApiKey: boolean;
   checkOnLaunch: boolean;

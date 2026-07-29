@@ -51,6 +51,7 @@ import type {
   AddonSource,
   AddonStatus,
   AppSettings,
+  GameFlavor,
   GameInstallation,
 } from "@/types";
 
@@ -82,10 +83,34 @@ const { message } = createDiscreteApi(["message"], {
 
 const defaultSettings: AppSettings = {
   gameRoot: "",
+  clientPaths: {},
   curseforgeApiKey: "",
   rememberApiKey: false,
   checkOnLaunch: false,
 };
+
+const clientPathOptions: Array<{
+  flavor: GameFlavor;
+  label: string;
+  folder: string;
+}> = [
+  { flavor: "retail", label: "正式服", folder: "_retail_" },
+  { flavor: "classic", label: "经典进度服", folder: "_classic_" },
+  { flavor: "classic_era", label: "经典旧世", folder: "_classic_era_" },
+  {
+    flavor: "classic_anniversary",
+    label: "周年纪念服",
+    folder: "_anniversary_",
+  },
+  {
+    flavor: "classic_titan",
+    label: "泰坦重铸时光服",
+    folder: "_classic_titan_",
+  },
+  { flavor: "classic_ptr", label: "经典测试服", folder: "_classic_ptr_" },
+  { flavor: "ptr", label: "正式服测试服", folder: "_ptr_" },
+  { flavor: "beta", label: "Beta 客户端", folder: "_beta_" },
+];
 
 const installations = ref<GameInstallation[]>([]);
 const activeInstallationId = ref("");
@@ -157,6 +182,7 @@ function loadSettings() {
     settings.value = {
       ...defaultSettings,
       ...stored,
+      clientPaths: stored.clientPaths ?? {},
       curseforgeApiKey: stored.rememberApiKey
         ? (stored.curseforgeApiKey ?? "")
         : "",
@@ -182,7 +208,48 @@ function saveSettings() {
 async function refreshInstallations() {
   loadingInstallations.value = true;
   try {
-    installations.value = await detectInstallations(settings.value.gameRoot);
+    const configuredPaths = Object.values(settings.value.clientPaths).filter(
+      (path): path is string => Boolean(path?.trim()),
+    );
+    const detectionPaths = Array.from(
+      new Set(
+        settings.value.gameRoot
+          ? [settings.value.gameRoot, ...configuredPaths]
+          : [undefined, ...configuredPaths],
+      ),
+    );
+    const detectionResults = await Promise.allSettled(
+      detectionPaths.map((path) => detectInstallations(path)),
+    );
+    const detected = detectionResults.flatMap((result) =>
+      result.status === "fulfilled" ? result.value : [],
+    );
+    if (!detected.length) {
+      const firstError = detectionResults.find(
+        (result): result is PromiseRejectedResult => result.status === "rejected",
+      );
+      throw firstError?.reason ?? new Error("没有找到可用客户端");
+    }
+
+    const installationsByFlavor = new Map<GameFlavor, GameInstallation>();
+    for (const installation of detected) {
+      if (!installationsByFlavor.has(installation.flavor)) {
+        installationsByFlavor.set(installation.flavor, installation);
+      }
+    }
+    for (const [flavor, path] of Object.entries(settings.value.clientPaths)) {
+      const configuredInstallation = detected.find(
+        (installation) =>
+          installation.flavor === flavor && installation.path === path,
+      );
+      if (configuredInstallation) {
+        installationsByFlavor.set(
+          flavor as GameFlavor,
+          configuredInstallation,
+        );
+      }
+    }
+    installations.value = Array.from(installationsByFlavor.values());
     const stillExists = installations.value.some(
       (installation) => installation.id === activeInstallationId.value,
     );
@@ -316,6 +383,27 @@ async function updateAll() {
 async function selectGameRoot() {
   const path = await chooseGameRoot();
   if (path) settings.value.gameRoot = path;
+}
+
+async function selectClientPath(flavor: GameFlavor, label: string) {
+  const path = await chooseGameRoot();
+  if (!path) return;
+  try {
+    const detected = await detectInstallations(path);
+    const installation = detected.find((item) => item.flavor === flavor);
+    if (!installation) {
+      message.warning(`所选目录中没有找到${label}客户端`);
+      return;
+    }
+    settings.value.clientPaths[flavor] = installation.path;
+    message.success(`${label}路径已设置`);
+  } catch (error) {
+    message.error(errorMessage(error, `无法识别${label}目录`));
+  }
+}
+
+function clearClientPath(flavor: GameFlavor) {
+  delete settings.value.clientPaths[flavor];
 }
 
 function showDetails(addon: AddonInfo) {
@@ -706,8 +794,53 @@ onMounted(async () => {
                   placeholder="留空则自动检测"
                 />
                 <n-button secondary @click="selectGameRoot">选择</n-button>
+                <n-button
+                  v-if="settings.gameRoot"
+                  quaternary
+                  @click="settings.gameRoot = ''"
+                >
+                  自动
+                </n-button>
               </div>
             </n-form-item>
+            <div class="client-paths-heading">
+              <strong>按版本指定客户端目录</strong>
+              <span>选择对应版本的客户端目录；留空时沿用根目录或自动检测。</span>
+            </div>
+            <div class="client-path-list">
+              <div
+                v-for="option in clientPathOptions"
+                :key="option.flavor"
+                class="client-path-row"
+              >
+                <div class="client-path-label">
+                  <strong>{{ option.label }}</strong>
+                  <span>{{ option.folder }}</span>
+                </div>
+                <div class="client-path-picker">
+                  <n-input
+                    :value="settings.clientPaths[option.flavor]"
+                    readonly
+                    placeholder="使用自动检测路径"
+                  />
+                  <n-button
+                    secondary
+                    size="small"
+                    @click="selectClientPath(option.flavor, option.label)"
+                  >
+                    选择
+                  </n-button>
+                  <n-button
+                    v-if="settings.clientPaths[option.flavor]"
+                    quaternary
+                    size="small"
+                    @click="clearClientPath(option.flavor)"
+                  >
+                    清除
+                  </n-button>
+                </div>
+              </div>
+            </div>
           </div>
 
           <div class="settings-divider" />

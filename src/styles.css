@@ -777,6 +777,11 @@ button {
   border-radius: 16px !important;
 }
 
+.settings-modal .n-card__content {
+  max-height: calc(100vh - 250px);
+  overflow-y: auto;
+}
+
 .details-modal {
   width: min(520px, calc(100vw - 48px)) !important;
   border-radius: 16px !important;
@@ -814,6 +819,59 @@ button {
   display: flex;
   width: 100%;
   gap: 8px;
+}
+
+.client-paths-heading {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin: 14px 0 9px;
+}
+
+.client-paths-heading strong,
+.client-path-label strong {
+  color: #4b4e5d;
+  font-size: 11px;
+}
+
+.client-paths-heading span,
+.client-path-label span {
+  color: #9da0ad;
+  font-size: 9px;
+}
+
+.client-path-list {
+  display: grid;
+  gap: 8px;
+}
+
+.client-path-row {
+  display: grid;
+  grid-template-columns: 124px minmax(0, 1fr);
+  align-items: center;
+  gap: 9px;
+  padding: 8px 9px;
+  border: 1px solid #ececf1;
+  border-radius: 9px;
+  background: #fbfbfd;
+}
+
+.client-path-label {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.client-path-picker {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+}
+
+.client-path-picker .n-input {
+  min-width: 0;
 }
 
 .settings-divider {
