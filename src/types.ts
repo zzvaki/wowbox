@@ -9,6 +9,7 @@ export type GameFlavor =
   | "beta";
 
 export type AddonSource = "curseforge" | "wowinterface" | "unknown";
+export type PluginDataSource = "curseforge";
 export type AddonStatus =
   | "current"
   | "update"
@@ -52,6 +53,8 @@ export interface AddonInfo {
 export interface UpdateCheckResult {
   addonId: string;
   status: "current" | "update" | "untracked" | "error";
+  title?: string;
+  summary?: string;
   latestVersion?: string;
   latestFileId?: string;
   downloadUrl?: string;
@@ -75,6 +78,7 @@ export interface UpdateResult {
 export interface AppSettings {
   gameRoot: string;
   clientPaths: Partial<Record<GameFlavor, string>>;
+  pluginDataSource: PluginDataSource;
   curseforgeApiKey: string;
   rememberApiKey: boolean;
   checkOnLaunch: boolean;

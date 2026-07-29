@@ -825,7 +825,20 @@ button {
   display: flex;
   flex-direction: column;
   gap: 3px;
-  margin: 14px 0 9px;
+  margin: 0;
+}
+
+.client-path-collapse {
+  margin-top: 13px;
+  border-top: 1px solid #ececf1;
+}
+
+.client-path-collapse .n-collapse-item__header {
+  min-height: 47px;
+}
+
+.client-path-collapse .n-collapse-item__content-wrapper {
+  padding-bottom: 3px;
 }
 
 .client-paths-heading strong,

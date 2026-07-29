@@ -1,11 +1,11 @@
 use crate::{
     models::{AddonInfo, UpdateCheckResult},
+    provider_config::curseforge_api_key,
     version::is_remote_newer,
 };
 use futures::{stream, StreamExt};
 use reqwest::Client;
 use serde::Deserialize;
-use serde_json::Value;
 
 const CURSEFORGE_API: &str = "https://api.curseforge.com/v1";
 const WOW_GAME_ID: u64 = 1;
@@ -13,8 +13,15 @@ const WOW_GAME_ID: u64 = 1;
 pub async fn check_updates(
     addons: Vec<AddonInfo>,
     flavor: String,
-    curseforge_api_key: Option<String>,
+    provider: String,
+    user_curseforge_api_key: Option<String>,
 ) -> Result<Vec<UpdateCheckResult>, String> {
+    if provider != "curseforge" {
+        return Err("当前版本仅支持 CurseForge 数据源。".into());
+    }
+    let api_key = curseforge_api_key(user_curseforge_api_key.as_deref()).ok_or_else(|| {
+        "未配置 CurseForge API Key。请填写个人 Key，或在构建时提供默认 Key。".to_string()
+    })?;
     let client = Client::builder()
         .user_agent(format!("WowBox/{}", env!("CARGO_PKG_VERSION")))
         .build()
@@ -23,42 +30,27 @@ pub async fn check_updates(
     // Never fall back to CurseForge's unfiltered files endpoint: doing so could
     // install a Retail package into a Classic client when version-type lookup
     // fails or the selected game flavor is unknown.
-    let version_type = match curseforge_api_key.as_deref() {
-        Some(key) if !key.trim().is_empty() => {
-            find_curseforge_version_type(&client, key, &flavor).await
-        }
-        _ => Ok(None),
-    };
+    let version_type = find_curseforge_version_type(&client, &api_key, &flavor).await;
 
     let results = stream::iter(addons.into_iter().map(|addon| {
         let client = client.clone();
-        let api_key = curseforge_api_key.clone();
-        let flavor = flavor.clone();
+        let api_key = api_key.clone();
         let version_type = version_type.clone();
         async move {
-            match addon.source.as_str() {
-                "curseforge" => {
-                    let Some(api_key) = api_key.filter(|value| !value.trim().is_empty()) else {
-                        return UpdateCheckResult::error(
-                            addon.id,
-                            "CurseForge 插件需要在设置中填写 API Key。",
-                        );
-                    };
-                    let version_type_id = match version_type {
-                        Ok(Some(id)) => id,
-                        Ok(None) => {
-                            return UpdateCheckResult::error(
-                                addon.id,
-                                "未找到与当前客户端匹配的 CurseForge 游戏版本。",
-                            )
-                        }
-                        Err(error) => return UpdateCheckResult::error(addon.id, error),
-                    };
-                    check_curseforge(&client, addon, &api_key, version_type_id).await
-                }
-                "wowinterface" => check_wowinterface(&client, addon, &flavor).await,
-                _ => UpdateCheckResult::untracked(addon.id),
+            if addon.source != "curseforge" {
+                return UpdateCheckResult::untracked(addon.id);
             }
+            let version_type_id = match version_type {
+                Ok(Some(id)) => id,
+                Ok(None) => {
+                    return UpdateCheckResult::error(
+                        addon.id,
+                        "未找到与当前客户端匹配的 CurseForge 游戏版本。",
+                    )
+                }
+                Err(error) => return UpdateCheckResult::error(addon.id, error),
+            };
+            check_curseforge(&client, addon, &api_key, version_type_id).await
         }
     }))
     .buffer_unordered(6)
@@ -103,6 +95,36 @@ async fn check_curseforge(
 ) -> UpdateCheckResult {
     let Some(project_id) = addon.source_id.as_deref() else {
         return UpdateCheckResult::untracked(addon.id);
+    };
+    let project = match client
+        .get(format!("{CURSEFORGE_API}/mods/{project_id}"))
+        .header("x-api-key", api_key)
+        .send()
+        .await
+    {
+        Ok(response) => match response.error_for_status() {
+            Ok(response) => match response.json::<ApiResponse<CurseProject>>().await {
+                Ok(payload) => payload.data,
+                Err(error) => {
+                    return UpdateCheckResult::error(
+                        addon.id,
+                        format!("CurseForge 插件信息无法解析：{error}"),
+                    )
+                }
+            },
+            Err(error) => {
+                return UpdateCheckResult::error(
+                    addon.id,
+                    format!("CurseForge 插件信息请求失败：{error}"),
+                )
+            }
+        },
+        Err(error) => {
+            return UpdateCheckResult::error(
+                addon.id,
+                format!("连接 CurseForge 插件信息失败：{error}"),
+            )
+        }
     };
     let mut request = client
         .get(format!(
@@ -150,106 +172,16 @@ async fn check_curseforge(
     UpdateCheckResult {
         addon_id: addon.id,
         status: status.into(),
+        title: Some(project.name),
+        summary: project.summary.filter(|summary| !summary.trim().is_empty()),
         latest_version: Some(version),
         latest_file_id: Some(file.id.to_string()),
         download_url: file.download_url,
-        website_url: Some(format!(
-            "https://www.curseforge.com/wow/addons/{project_id}"
-        )),
-        error: None,
-    }
-}
-
-async fn check_wowinterface(client: &Client, addon: AddonInfo, flavor: &str) -> UpdateCheckResult {
-    let Some(project_id) = addon.source_id.as_deref() else {
-        return UpdateCheckResult::untracked(addon.id);
-    };
-    let url = format!("https://api.mmoui.com/game/WOW/filedetails/{project_id}.json");
-    let payload = match client.get(url).send().await {
-        Ok(response) => match response.error_for_status() {
-            Ok(response) => match response.json::<Value>().await {
-                Ok(payload) => payload,
-                Err(error) => {
-                    return UpdateCheckResult::error(
-                        addon.id,
-                        format!("WoWInterface 返回了无法识别的数据：{error}"),
-                    )
-                }
-            },
-            Err(error) => {
-                return UpdateCheckResult::error(
-                    addon.id,
-                    format!("WoWInterface 请求失败：{error}"),
-                )
-            }
-        },
-        Err(error) => {
-            return UpdateCheckResult::error(addon.id, format!("连接 WoWInterface 失败：{error}"))
-        }
-    };
-
-    let details = payload
-        .as_array()
-        .and_then(|items| items.first())
-        .unwrap_or(&payload);
-    let compatibility = json_string(
-        details,
-        &[
-            "Compatibility",
-            "compatibility",
-            "GameVersion",
-            "gameVersion",
-            "UICompatibility",
-        ],
-    );
-    if !wowinterface_supports_flavor(compatibility.as_deref(), flavor) {
-        return UpdateCheckResult::error(
-            addon.id,
-            "WoWInterface 未确认此文件与当前客户端版本兼容，已跳过更新。",
-        );
-    }
-    let version = json_string(
-        details,
-        &[
-            "Version",
-            "version",
-            "UIVersion",
-            "uiversion",
-            "UIFileVersion",
-        ],
-    )
-    .unwrap_or_else(|| "未知".into());
-    let download_url = json_string(
-        details,
-        &[
-            "Download",
-            "download",
-            "downloadUri",
-            "UIFileDownloadURL",
-            "UIDownload",
-        ],
-    )
-    .or_else(|| {
-        Some(format!(
-            "https://cdn.wowinterface.com/downloads/getfile.php?id={project_id}"
-        ))
-    });
-    let file_id = json_string(details, &["UID", "uid", "Id", "id", "UIFileID"]);
-    let status = if version != "未知" && is_remote_newer(&addon.version, &version) {
-        "update"
-    } else {
-        "current"
-    };
-
-    UpdateCheckResult {
-        addon_id: addon.id,
-        status: status.into(),
-        latest_version: Some(version),
-        latest_file_id: file_id,
-        download_url,
-        website_url: Some(format!(
-            "https://www.wowinterface.com/downloads/info{project_id}.html"
-        )),
+        website_url: project.links.website_url.or_else(|| {
+            Some(format!(
+                "https://www.curseforge.com/wow/addons/{project_id}"
+            ))
+        }),
         error: None,
     }
 }
@@ -283,18 +215,6 @@ fn matches_curseforge_flavor(
                 .any(|token| haystack.contains(token));
     }
     wanted.iter().all(|token| haystack.contains(token))
-}
-
-fn wowinterface_supports_flavor(compatibility: Option<&str>, flavor: &str) -> bool {
-    let Some(compatibility) = compatibility else {
-        // WoWInterface's normal WoW endpoint is Retail-only unless a response
-        // explicitly advertises another flavor.
-        return flavor == "retail";
-    };
-    let value = compatibility.to_lowercase();
-    flavor_tokens(flavor)
-        .iter()
-        .all(|token| value.contains(token))
 }
 
 fn display_version(file: &CurseFile) -> String {
@@ -350,17 +270,6 @@ fn trim_archive_extension(value: &str) -> &str {
     value.trim_end_matches(".zip").trim_end_matches(".ZIP")
 }
 
-fn json_string(value: &Value, keys: &[&str]) -> Option<String> {
-    keys.iter().find_map(|key| {
-        value.get(*key).and_then(|value| {
-            value
-                .as_str()
-                .map(ToString::to_string)
-                .or_else(|| value.as_u64().map(|number| number.to_string()))
-        })
-    })
-}
-
 #[derive(Debug, Deserialize)]
 struct ApiResponse<T> {
     data: T,
@@ -383,6 +292,20 @@ struct CurseFile {
     release_type: u8,
     file_date: String,
     download_url: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CurseProject {
+    name: String,
+    summary: Option<String>,
+    links: CurseProjectLinks,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CurseProjectLinks {
+    website_url: Option<String>,
 }
 
 #[cfg(test)]

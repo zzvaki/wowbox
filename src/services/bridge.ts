@@ -38,7 +38,8 @@ export async function scanAddons(
 export async function checkAddonUpdates(
   addons: AddonInfo[],
   flavor: string,
-  curseforgeApiKey?: string,
+  provider: string,
+  userCurseforgeApiKey?: string,
 ): Promise<UpdateCheckResult[]> {
   if (!inTauri()) {
     await delay(900);
@@ -47,7 +48,8 @@ export async function checkAddonUpdates(
   return invoke<UpdateCheckResult[]>("check_updates", {
     addons,
     flavor,
-    curseforgeApiKey: curseforgeApiKey || null,
+    provider,
+    userCurseforgeApiKey: userCurseforgeApiKey || null,
   });
 }
 

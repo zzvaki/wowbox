@@ -2,6 +2,8 @@
 import { computed, onMounted, ref } from "vue";
 import {
   NButton,
+  NCollapse,
+  NCollapseItem,
   NConfigProvider,
   NEmpty,
   NFormItem,
@@ -54,6 +56,7 @@ import type {
   AppSettings,
   GameFlavor,
   GameInstallation,
+  PluginDataSource,
 } from "@/types";
 
 const themeOverrides: GlobalThemeOverrides = {
@@ -85,6 +88,7 @@ const { message } = createDiscreteApi(["message"], {
 const defaultSettings: AppSettings = {
   gameRoot: "",
   clientPaths: {},
+  pluginDataSource: "curseforge",
   curseforgeApiKey: "",
   rememberApiKey: false,
   checkOnLaunch: false,
@@ -120,6 +124,18 @@ const clientPathOptions: Array<{
   { flavor: "beta", label: "Beta 客户端", folder: "_beta_" },
 ];
 
+const pluginDataSourceOptions = [
+  {
+    label: "CurseForge",
+    value: "curseforge" satisfies PluginDataSource,
+  },
+  {
+    label: "WoWInterface（即将支持）",
+    value: "wowinterface",
+    disabled: true,
+  },
+];
+
 const installations = ref<GameInstallation[]>([]);
 const activeInstallationId = ref("");
 const addons = ref<AddonInfo[]>([]);
@@ -130,6 +146,7 @@ const scanning = ref(false);
 const checking = ref(false);
 const updatingAll = ref(false);
 const settingsVisible = ref(false);
+const expandedSettings = ref<string[]>([]);
 const detailsVisible = ref(false);
 const selectedAddon = ref<AddonInfo | null>(null);
 const apiKeyVisible = ref(false);
@@ -192,6 +209,7 @@ function loadSettings() {
       ...defaultSettings,
       ...stored,
       clientPaths: stored.clientPaths ?? {},
+      pluginDataSource: stored.pluginDataSource ?? "curseforge",
       curseforgeApiKey: stored.rememberApiKey
         ? (stored.curseforgeApiKey ?? "")
         : "",
@@ -210,6 +228,7 @@ function configuredGamePaths(value: AppSettings) {
 
 function openSettings() {
   settingsDraft.value = cloneSettings(settings.value);
+  expandedSettings.value = [];
   settingsVisible.value = true;
 }
 
@@ -344,6 +363,7 @@ async function runUpdateCheck() {
     const results = await checkAddonUpdates(
       addons.value,
       activeInstallation.value.flavor,
+      settings.value.pluginDataSource,
       settings.value.curseforgeApiKey,
     );
     const resultMap = new Map(results.map((result) => [result.addonId, result]));
@@ -353,6 +373,8 @@ async function runUpdateCheck() {
       return {
         ...addon,
         status: result.status,
+        title: result.title || addon.title,
+        notes: result.summary || addon.notes,
         latestVersion: result.latestVersion,
         latestFileId: result.latestFileId,
         latestDownloadUrl: result.downloadUrl,
@@ -464,7 +486,7 @@ function statusLabel(status: AddonStatus) {
 function sourceLabel(source: AddonSource) {
   return {
     curseforge: "CurseForge",
-    wowinterface: "WoWInterface",
+    wowinterface: "WoWInterface（一期未启用）",
     unknown: "本地插件",
   }[source];
 }
@@ -842,44 +864,53 @@ onMounted(async () => {
                 </n-button>
               </div>
             </n-form-item>
-            <div class="client-paths-heading">
-              <strong>按版本指定客户端目录</strong>
-              <span>选择对应版本的客户端目录；留空时沿用根目录或自动检测。</span>
-            </div>
-            <div class="client-path-list">
-              <div
-                v-for="option in clientPathOptions"
-                :key="option.flavor"
-                class="client-path-row"
-              >
-                <div class="client-path-label">
-                  <strong>{{ option.label }}</strong>
-                  <span>{{ option.folder }}</span>
-                </div>
-                <div class="client-path-picker">
-                  <n-input
-                    :value="settingsDraft.clientPaths[option.flavor]"
-                    readonly
-                    placeholder="使用自动检测路径"
-                  />
-                  <n-button
-                    secondary
-                    size="small"
-                    @click="selectClientPath(option.flavor, option.label)"
+            <n-collapse
+              v-model:expanded-names="expandedSettings"
+              class="client-path-collapse"
+            >
+              <n-collapse-item name="client-paths">
+                <template #header>
+                  <div class="client-paths-heading">
+                    <strong>按版本指定客户端目录</strong>
+                    <span>默认收起；展开后可覆盖自动检测路径。</span>
+                  </div>
+                </template>
+                <div class="client-path-list">
+                  <div
+                    v-for="option in clientPathOptions"
+                    :key="option.flavor"
+                    class="client-path-row"
                   >
-                    选择
-                  </n-button>
-                  <n-button
-                    v-if="settingsDraft.clientPaths[option.flavor]"
-                    quaternary
-                    size="small"
-                    @click="clearClientPath(option.flavor)"
-                  >
-                    清除
-                  </n-button>
+                    <div class="client-path-label">
+                      <strong>{{ option.label }}</strong>
+                      <span>{{ option.folder }}</span>
+                    </div>
+                    <div class="client-path-picker">
+                      <n-input
+                        :value="settingsDraft.clientPaths[option.flavor]"
+                        readonly
+                        placeholder="使用自动检测路径"
+                      />
+                      <n-button
+                        secondary
+                        size="small"
+                        @click="selectClientPath(option.flavor, option.label)"
+                      >
+                        选择
+                      </n-button>
+                      <n-button
+                        v-if="settingsDraft.clientPaths[option.flavor]"
+                        quaternary
+                        size="small"
+                        @click="clearClientPath(option.flavor)"
+                      >
+                        清除
+                      </n-button>
+                    </div>
+                  </div>
                 </div>
-              </div>
-            </div>
+              </n-collapse-item>
+            </n-collapse>
           </div>
 
           <div class="settings-divider" />
@@ -888,15 +919,21 @@ onMounted(async () => {
             <div class="settings-section-title">
               <ShieldCheck :size="18" />
               <div>
-                <strong>更新来源</strong>
-                <span>WoWInterface 无需密钥；CurseForge 需要个人 API Key</span>
+                <strong>插件信息数据源</strong>
+                <span>一期使用 CurseForge REST API，后续可扩展其他来源。</span>
               </div>
             </div>
-            <n-form-item label="CurseForge API Key">
+            <n-form-item label="数据源">
+              <n-select
+                v-model:value="settingsDraft.pluginDataSource"
+                :options="pluginDataSourceOptions"
+              />
+            </n-form-item>
+            <n-form-item label="个人 CurseForge API Key（可选）">
               <n-input
                 v-model:value="settingsDraft.curseforgeApiKey"
                 :type="apiKeyVisible ? 'text' : 'password'"
-                placeholder="x-api-key"
+                placeholder="留空使用应用默认 x-api-key"
               >
                 <template #suffix>
                   <button
@@ -913,8 +950,8 @@ onMounted(async () => {
             </n-form-item>
             <div class="setting-toggle">
               <div>
-                <strong>记住 API Key</strong>
-                <span>密钥只保存在当前设备的 WebView 存储中</span>
+                <strong>记住个人 API Key</strong>
+                <span>仅在填写个人 Key 时保存到当前设备</span>
               </div>
               <n-switch v-model:value="settingsDraft.rememberApiKey" />
             </div>

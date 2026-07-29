@@ -7,8 +7,8 @@ WowBox 是一个专注于“扫描、识别、更新”的跨平台《魔兽世�
 - 自动检测 macOS / Windows 上的 World of Warcraft 目录
 - 支持正式服、经典进度服、经典旧世、周年纪念服、PTR 和 Beta 等多个产品目录
 - 解析插件 `.toc` 文件中的中文标题、描述、作者、版本、Interface 和更新源 ID
-- 使用 `X-Curse-Project-ID` / `X-WoWI-ID` 合并一个插件包包含的多个文件夹
-- 通过 CurseForge 和 WoWInterface 检查新版本
+- 使用 `X-Curse-Project-ID` 合并一个插件包包含的多个文件夹
+- 通过 CurseForge REST API 查询插件信息与可用更新
 - 在 UI 中更新单个插件或全部插件
 - 更新前自动备份旧目录，安装失败时自动回滚
 - 拒绝 ZIP 路径穿越，限制下载包大小为 200 MB
@@ -43,11 +43,18 @@ pnpm build
 pnpm tauri build
 ```
 
-## CurseForge API Key
+## CurseForge API Key 与数据源
 
-CurseForge 官方 API 要求第三方客户端提供 `x-api-key`。WowBox 不会内置或代理密钥，用户可以在“设置 → 更新来源”中填写自己的 API Key。选择“记住 API Key”后，密钥仅保存在当前系统 WebView 的本地存储中。
+一期数据源为 CurseForge。应用会调用其 REST API 的项目与文件接口，补全插件名称、简介、官方网站、最新版本与下载地址。
 
-WoWInterface 不要求用户密钥，但其公共接口可能执行限流。WowBox 会为请求附带明确的应用 User-Agent。
+默认 `x-api-key` 在构建时从原生进程环境变量 `CURSEFORGE_API_KEY` 注入，不会显示或传递到 WebView。构建前可执行：
+
+```bash
+export CURSEFORGE_API_KEY='your-key'
+pnpm tauri build
+```
+
+用户也可以在“设置 → 插件信息数据源”中填写个人 Key；个人 Key 优先于默认 Key，且仅在开启“记住个人 API Key”后保存到本机。桌面应用中的构建期 Key 不能视为不可提取的机密，建议使用可轮换、权限受限的 Key。
 
 ## 本地目录与备份
 
@@ -80,7 +87,8 @@ src/
 
 src-tauri/src/
 ├── scanner.rs              # 客户端检测与 TOC 扫描
-├── providers.rs            # CurseForge / WoWInterface
+├── provider_config.rs      # 原生进程内的 CurseForge Key 解析
+├── providers.rs            # CurseForge REST API 查询
 ├── updater.rs              # 下载、备份、安全解压、回滚
 ├── version.rs              # 非标准版本号自然排序
 └── models.rs               # Tauri 命令数据模型
@@ -88,6 +96,6 @@ src-tauri/src/
 
 ## 一期限制
 
-- 只有 `.toc` 中带 CurseForge 或 WoWInterface 项目 ID 的插件才能自动关联更新源；其余插件会标记为“未关联”。
-- CurseForge 下载是否可用取决于用户 API Key 的权限和插件作者的分发设置。
+- 只有 `.toc` 中带 `X-Curse-Project-ID` 的插件才能在一期自动关联更新源；其余插件会标记为“未关联”。
+- CurseForge 下载是否可用取决于默认或个人 API Key 的权限，以及插件作者的分发设置。
 - 当前不包含插件市场、账号同步、云端配置或 WeakAuras 管理。

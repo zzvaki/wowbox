@@ -41,6 +41,8 @@ pub struct AddonInfo {
 pub struct UpdateCheckResult {
     pub addon_id: String,
     pub status: String,
+    pub title: Option<String>,
+    pub summary: Option<String>,
     pub latest_version: Option<String>,
     pub latest_file_id: Option<String>,
     pub download_url: Option<String>,
@@ -53,6 +55,8 @@ impl UpdateCheckResult {
         Self {
             addon_id,
             status: "untracked".into(),
+            title: None,
+            summary: None,
             latest_version: None,
             latest_file_id: None,
             download_url: None,
@@ -65,6 +69,8 @@ impl UpdateCheckResult {
         Self {
             addon_id,
             status: "error".into(),
+            title: None,
+            summary: None,
             latest_version: None,
             latest_file_id: None,
             download_url: None,

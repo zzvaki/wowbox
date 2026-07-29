@@ -1,4 +1,7 @@
-use crate::models::{UpdateRequest, UpdateResult};
+use crate::{
+    models::{UpdateRequest, UpdateResult},
+    provider_config::curseforge_api_key,
+};
 use chrono::Utc;
 use reqwest::Client;
 use std::{
@@ -29,10 +32,7 @@ pub async fn update_addon(
         .map_err(|error| format!("无法初始化下载器：{error}"))?;
     let mut download = client.get(&request.download_url);
     if request.addon.source == "curseforge" {
-        let api_key = request
-            .api_key
-            .as_deref()
-            .filter(|value| !value.trim().is_empty())
+        let api_key = curseforge_api_key(request.api_key.as_deref())
             .ok_or_else(|| "下载 CurseForge 文件需要 API Key。".to_string())?;
         download = download.header("x-api-key", api_key);
     }

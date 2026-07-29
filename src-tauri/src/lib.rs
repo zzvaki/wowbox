@@ -1,4 +1,5 @@
 mod models;
+mod provider_config;
 mod providers;
 mod scanner;
 mod updater;
@@ -183,9 +184,10 @@ fn scan_addons(
 async fn check_updates(
     addons: Vec<AddonInfo>,
     flavor: String,
-    curseforge_api_key: Option<String>,
+    provider: String,
+    user_curseforge_api_key: Option<String>,
 ) -> Result<Vec<UpdateCheckResult>, String> {
-    providers::check_updates(addons, flavor, curseforge_api_key).await
+    providers::check_updates(addons, flavor, provider, user_curseforge_api_key).await
 }
 
 #[tauri::command]
