@@ -83,4 +83,23 @@ describe("applyAndGroupUpdateResults", () => {
       .toEqual(["Atlas", "Atlas_Config"]);
     expect(grouped.some((addon) => addon.folderName === "AtlasLoot")).toBe(true);
   });
+
+  it("clears inferred folder warnings after CurseForge confirms the full package", () => {
+    const addon = localAddon("Example");
+    addon.id = "local-package:example";
+    addon.folders = ["Example", "Example_Config", "Example_Data"];
+    addon.inferredFolders = ["Example_Config", "Example_Data"];
+
+    const grouped = applyAndGroupUpdateResults([addon], [
+      {
+        addonId: addon.id,
+        status: "current",
+        sourceId: "123",
+        packageFolders: addon.folders,
+      },
+    ]);
+
+    expect(grouped).toHaveLength(1);
+    expect(grouped[0].inferredFolders).toEqual([]);
+  });
 });

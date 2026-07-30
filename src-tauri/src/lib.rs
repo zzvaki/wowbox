@@ -283,6 +283,7 @@ async fn update_addon(
 #[tauri::command]
 fn delete_addon(
     addon: AddonInfo,
+    allow_inferred_folders: bool,
     managed_roots: State<'_, ManagedAddonRoots>,
     operations: State<'_, ManagedAddonOperations>,
 ) -> Result<DeleteAddonResult, String> {
@@ -300,7 +301,7 @@ fn delete_addon(
         return Err("插件目录尚未由本次会话扫描，请先重新扫描后再删除。".into());
     }
     begin_addon_operation(&operations, &addons_root)?;
-    let result = updater::delete_addon(addon, addons_root.clone());
+    let result = updater::delete_addon(addon, addons_root.clone(), allow_inferred_folders);
     finish_addon_operation(&operations, &addons_root);
     result
 }

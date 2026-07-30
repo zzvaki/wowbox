@@ -1,7 +1,7 @@
 use crate::models::{AddonInfo, GameInstallation};
 use chrono::{DateTime, Utc};
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, BTreeSet, HashMap},
     fs,
     path::{Path, PathBuf},
 };
@@ -133,11 +133,17 @@ pub fn scan_addons_with_known_sources(
                 })
         })
         .collect::<Vec<_>>();
+    let local_package_groups = infer_local_package_groups(&scanned, &resolved_sources);
     let mut order = (0..scanned.len()).collect::<Vec<_>>();
     order.sort_by_key(|index| {
+        let folder_key = scanned[*index].folder_name.to_ascii_lowercase();
+        let is_non_primary_local_module = local_package_groups
+            .get(index)
+            .is_some_and(|group_id| group_id != &format!("local-package:{folder_key}"));
         (
             resolved_sources[*index].is_none(),
-            scanned[*index].folder_name.to_ascii_lowercase(),
+            is_non_primary_local_module,
+            folder_key,
         )
     });
 
@@ -148,20 +154,29 @@ pub fn scan_addons_with_known_sources(
         let folder_path = &folder.folder_path;
         let metadata = &folder.metadata;
         let resolved_source = resolved_sources[index].as_ref();
+        let is_inferred_folder = resolved_source.is_none()
+            && local_package_groups.get(&index).is_some_and(|group_id| {
+                group_id != &format!("local-package:{}", folder_name.to_ascii_lowercase())
+            });
         let (source, source_id, group_id) = match resolved_source {
             Some((source, source_id)) => (
                 source.as_str(),
                 Some(source_id.clone()),
                 format!("{source}:{source_id}"),
             ),
-            None => (
-                "unknown",
-                None,
-                format!("local:{}", folder_name.to_ascii_lowercase()),
-            ),
+            None => {
+                let group_id = local_package_groups
+                    .get(&index)
+                    .cloned()
+                    .unwrap_or_else(|| format!("local:{}", folder_name.to_ascii_lowercase()));
+                ("unknown", None, group_id)
+            }
         };
         if let Some(existing) = grouped.get_mut(&group_id) {
             existing.folders.push(folder_name.clone());
+            if is_inferred_folder {
+                existing.inferred_folders.push(folder_name.clone());
+            }
             let title = clean_wow_text(&localized_value(metadata, "title", locale));
             let notes = clean_wow_text(&localized_value(metadata, "notes", locale));
             let author = clean_wow_text(metadata.get("author").map(String::as_str).unwrap_or(""));
@@ -219,6 +234,11 @@ pub fn scan_addons_with_known_sources(
             source_id,
             folder_name: folder_name.clone(),
             folders: vec![folder_name.clone()],
+            inferred_folders: if is_inferred_folder {
+                vec![folder_name.clone()]
+            } else {
+                Vec::new()
+            },
             package_folders: Vec::new(),
             path: path_string(folder_path),
             status: if source == "unknown" {
@@ -239,6 +259,103 @@ pub fn scan_addons_with_known_sources(
     let mut addons: Vec<_> = grouped.into_values().collect();
     addons.sort_by_key(|addon| addon.title.to_lowercase());
     Ok(addons)
+}
+
+fn infer_local_package_groups(
+    scanned: &[ScannedFolder],
+    resolved_sources: &[Option<(String, String)>],
+) -> HashMap<usize, String> {
+    let indexes_by_name = scanned
+        .iter()
+        .enumerate()
+        .map(|(index, folder)| (folder.folder_name.to_ascii_lowercase(), index))
+        .collect::<HashMap<_, _>>();
+    let mut cohorts_by_root = HashMap::<usize, BTreeMap<(String, String), BTreeSet<usize>>>::new();
+
+    for (child_index, child) in scanned.iter().enumerate() {
+        if resolved_sources[child_index].is_some() {
+            continue;
+        }
+        let candidate_roots = required_dependency_names(&child.metadata)
+            .into_iter()
+            .filter_map(|dependency| {
+                indexes_by_name
+                    .get(&dependency.to_ascii_lowercase())
+                    .copied()
+            })
+            .filter(|root_index| {
+                *root_index != child_index && resolved_sources[*root_index].is_none()
+            })
+            .collect::<BTreeSet<_>>();
+        if candidate_roots.len() != 1 {
+            continue;
+        }
+        let root_index = *candidate_roots
+            .first()
+            .expect("one dependency root was confirmed");
+        let Some(family) = folder_family_name(&child.folder_name) else {
+            continue;
+        };
+        let author = child
+            .metadata
+            .get("author")
+            .map(|value| value.trim().to_ascii_lowercase())
+            .filter(|value| !value.is_empty());
+        let Some(author) = author else {
+            continue;
+        };
+        cohorts_by_root
+            .entry(root_index)
+            .or_default()
+            .entry((family, author))
+            .or_default()
+            .insert(child_index);
+    }
+
+    let mut groups = HashMap::new();
+    for (root_index, cohorts) in cohorts_by_root {
+        let confirmed_dependents = cohorts
+            .into_values()
+            .filter(|dependents| dependents.len() >= 2)
+            .flatten()
+            .collect::<BTreeSet<_>>();
+        if confirmed_dependents.is_empty() {
+            continue;
+        }
+        let group_id = format!(
+            "local-package:{}",
+            scanned[root_index].folder_name.to_ascii_lowercase()
+        );
+        groups.insert(root_index, group_id.clone());
+        for dependent in confirmed_dependents {
+            groups.insert(dependent, group_id.clone());
+        }
+    }
+    groups
+}
+
+fn required_dependency_names(metadata: &HashMap<String, String>) -> Vec<&str> {
+    ["requireddeps", "dependencies", "dependson"]
+        .into_iter()
+        .filter_map(|key| metadata.get(key))
+        .flat_map(|value| {
+            value
+                .split(|character: char| {
+                    character == ',' || character == ';' || character.is_whitespace()
+                })
+                .map(str::trim)
+                .filter(|dependency| !dependency.is_empty())
+        })
+        .collect()
+}
+
+fn folder_family_name(folder_name: &str) -> Option<String> {
+    let family = folder_name
+        .split(['_', '-', '.'])
+        .next()
+        .unwrap_or_default()
+        .trim();
+    (!family.is_empty() && family.len() < folder_name.len()).then(|| family.to_ascii_lowercase())
 }
 
 fn candidate_roots(custom_root: Option<String>) -> Vec<PathBuf> {
@@ -592,6 +709,79 @@ mod tests {
         assert!(addons
             .iter()
             .any(|addon| addon.id == "local:examplesuite_independent"));
+    }
+
+    #[test]
+    fn groups_a_local_package_with_multiple_declared_modules() {
+        let temporary_directory = tempdir().expect("create temporary directory");
+        let addons_path = temporary_directory.path().join("Interface").join("AddOns");
+        for (folder, toc) in [
+            (
+                "AtlasLootMY",
+                "## Title: AtlasLoot - Core\n## Version: 2.3.5\n",
+            ),
+            (
+                "AtlasLootMY_Data",
+                "## Title: AtlasLoot - Data\n## Author: Lag\n## Dependencies: AtlasLootMY\n## Version: 3.0.0\n",
+            ),
+            (
+                "AtlasLootMY_Options",
+                "## Title: AtlasLoot - Options\n## Author: Lag\n## Dependencies: AtlasLootMY\n## Version: 3.0.0\n",
+            ),
+            (
+                "AtlasLootMY_Collections",
+                "## Title: AtlasLoot - Collections\n## Author: Lag\n## Dependencies: AtlasLootMY\n## Version: 3.0.2\n",
+            ),
+            (
+                "AtlasMY_ClassicWoW",
+                "## Title: Atlas - Classic Maps\n## Author: Atlas Team\n## Dependencies: AtlasLootMY\n## Version: 1.50.02\n",
+            ),
+            (
+                "AtlasMY_BurningCrusade",
+                "## Title: Atlas - Burning Crusade Maps\n## Author: Atlas Team\n## Dependencies: AtlasLootMY\n## Version: 1.50.02\n",
+            ),
+            (
+                "AtlasLootMY_Independent",
+                "## Title: Independently Distributed Extension\n## Author: Other Author\n## Dependencies: AtlasLootMY\n## Version: 1.0.0\n",
+            ),
+        ] {
+            let path = addons_path.join(folder);
+            fs::create_dir_all(&path).expect("create add-on directory");
+            fs::write(path.join(format!("{folder}.toc")), toc).expect("write toc");
+        }
+
+        let addons = scan_addons(&addons_path.to_string_lossy(), "classic_titan", "zh-CN")
+            .expect("scan local package");
+
+        assert_eq!(addons.len(), 2);
+        let package = addons
+            .iter()
+            .find(|addon| addon.folder_name == "AtlasLootMY")
+            .expect("grouped Atlas package");
+        assert_eq!(
+            package.folders,
+            vec![
+                "AtlasLootMY",
+                "AtlasLootMY_Collections",
+                "AtlasLootMY_Data",
+                "AtlasLootMY_Options",
+                "AtlasMY_BurningCrusade",
+                "AtlasMY_ClassicWoW",
+            ]
+        );
+        assert_eq!(
+            package.inferred_folders,
+            vec![
+                "AtlasLootMY_Collections",
+                "AtlasLootMY_Data",
+                "AtlasLootMY_Options",
+                "AtlasMY_BurningCrusade",
+                "AtlasMY_ClassicWoW",
+            ]
+        );
+        assert!(addons
+            .iter()
+            .any(|addon| addon.id == "local:atlaslootmy_independent"));
     }
 
     #[test]

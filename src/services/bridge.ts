@@ -112,6 +112,7 @@ export async function installAddonUpdate(
 
 export async function deleteInstalledAddon(
   addon: AddonInfo,
+  allowInferredFolders = false,
 ): Promise<DeleteAddonResult> {
   if (!inTauri()) {
     await delay(500);
@@ -121,7 +122,10 @@ export async function deleteInstalledAddon(
       removedFolders: addon.folders,
     };
   }
-  return invoke<DeleteAddonResult>("delete_addon", { addon });
+  return invoke<DeleteAddonResult>("delete_addon", {
+    addon,
+    allowInferredFolders,
+  });
 }
 
 export async function chooseGameRoot(): Promise<string | null> {

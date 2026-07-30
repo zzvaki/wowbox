@@ -517,14 +517,14 @@ function confirmReinstall(addon: AddonInfo) {
   });
 }
 
-async function deleteOne(addon: AddonInfo) {
+async function deleteOne(addon: AddonInfo, allowInferredFolders = false) {
   if (hasActiveOperations.value) {
     message.warning(t("operationInProgress"));
     return;
   }
   setAddonBusy(addon.id, true);
   try {
-    const result = await deleteInstalledAddon(addon);
+    const result = await deleteInstalledAddon(addon, allowInferredFolders);
     addons.value = addons.value.filter((item) => item.id !== addon.id);
     if (activeInstallation.value) {
       activeInstallation.value.addonCount = addons.value.length;
@@ -543,6 +543,27 @@ async function deleteOne(addon: AddonInfo) {
 }
 
 function confirmDelete(addon: AddonInfo) {
+  const inferredFolders = Array.from(
+    new Set(addon.inferredFolders ?? []),
+  ).sort();
+  if (inferredFolders.length > 0) {
+    const foldersToDelete = Array.from(
+      new Set([addon.folderName, ...addon.folders]),
+    ).sort();
+    dialog.error({
+      title: t("confirmInferredDeleteTitle"),
+      content: t("confirmInferredDeleteContent", {
+        title: addon.title,
+        count: inferredFolders.length,
+        inferredFolders: inferredFolders.join(", "),
+        allFolders: foldersToDelete.join(", "),
+      }),
+      positiveText: t("deleteListedFolders"),
+      negativeText: t("cancel"),
+      onPositiveClick: () => deleteOne(addon, true),
+    });
+    return;
+  }
   dialog.error({
     title: t("confirmDeleteTitle"),
     content: t("confirmDeleteContent", { title: addon.title }),

@@ -27,6 +27,8 @@ pub struct AddonInfo {
     pub folder_name: String,
     pub folders: Vec<String>,
     #[serde(default)]
+    pub inferred_folders: Vec<String>,
+    #[serde(default)]
     pub package_folders: Vec<String>,
     pub path: String,
     pub status: String,

@@ -142,9 +142,16 @@ pub async fn update_addon(
     })
 }
 
-pub fn delete_addon(addon: AddonInfo, addons_root: PathBuf) -> Result<DeleteAddonResult, String> {
+pub fn delete_addon(
+    addon: AddonInfo,
+    addons_root: PathBuf,
+    allow_inferred_folders: bool,
+) -> Result<DeleteAddonResult, String> {
     if !addons_root.is_dir() {
         return Err(format!("插件根目录不存在：{}", addons_root.display()));
+    }
+    if !addon.inferred_folders.is_empty() && !allow_inferred_folders {
+        return Err("插件包含尚未由数据源确认的关联目录，请确认目录列表后再删除。".into());
     }
     let addons_root =
         fs::canonicalize(addons_root).map_err(|error| format!("无法确认插件根目录：{error}"))?;
@@ -411,6 +418,7 @@ mod tests {
             source_id: None,
             folder_name: "ExampleAddon".into(),
             folders: vec!["ExampleAddon".into(), "ExampleAddon_Config".into()],
+            inferred_folders: Vec::new(),
             package_folders: Vec::new(),
             path: path.to_string_lossy().into_owned(),
             status: "untracked".into(),
@@ -434,7 +442,7 @@ mod tests {
 
         let addon = test_addon(&primary);
 
-        let result = delete_addon(addon, root.path().to_path_buf()).expect("move to trash");
+        let result = delete_addon(addon, root.path().to_path_buf(), false).expect("move to trash");
 
         assert!(!primary.exists());
         assert!(!companion.exists());
@@ -444,6 +452,30 @@ mod tests {
         assert!(std::path::Path::new(&result.trash_path)
             .join("ExampleAddon_Config")
             .is_dir());
+    }
+
+    #[test]
+    fn delete_requires_explicit_confirmation_for_inferred_folders() {
+        let root = tempdir().expect("temporary add-on root");
+        let primary = root.path().join("ExampleAddon");
+        let companion = root.path().join("ExampleAddon_Config");
+        fs::create_dir_all(&primary).expect("primary folder");
+        fs::create_dir_all(&companion).expect("companion folder");
+        let mut addon = test_addon(&primary);
+        addon.inferred_folders = vec!["ExampleAddon_Config".into()];
+
+        let error = delete_addon(addon.clone(), root.path().to_path_buf(), false)
+            .expect_err("inferred folders require explicit confirmation");
+        assert!(error.contains("确认目录列表"));
+        assert!(primary.is_dir());
+        assert!(companion.is_dir());
+
+        let result = delete_addon(addon, root.path().to_path_buf(), true)
+            .expect("explicitly confirmed inferred folders");
+        assert_eq!(
+            result.removed_folders,
+            vec!["ExampleAddon", "ExampleAddon_Config"]
+        );
     }
 
     #[test]
@@ -492,7 +524,7 @@ mod tests {
         fs::write(primary.join("ExampleAddon.toc"), "## Version: 1.0").expect("toc fixture");
         symlink(external.path(), root.path().join(".wowbox-trash")).expect("trash symlink");
 
-        let error = delete_addon(test_addon(&primary), root.path().to_path_buf())
+        let error = delete_addon(test_addon(&primary), root.path().to_path_buf(), false)
             .expect_err("symlinked trash must be rejected");
 
         assert!(error.contains("符号链接"));

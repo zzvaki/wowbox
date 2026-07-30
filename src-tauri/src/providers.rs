@@ -138,6 +138,9 @@ async fn check_curseforge(
 
     let version = display_version(&file);
     let package_folders = package_folders(&file);
+    if !package_covers_local_folders(&addon, &package_folders) {
+        return UpdateCheckResult::untracked(addon.id);
+    }
     let status = if is_remote_newer(&addon.version, &version) {
         "update"
     } else {
@@ -647,6 +650,21 @@ fn package_folders(file: &CurseFile) -> Vec<String> {
         .collect()
 }
 
+fn package_covers_local_folders(addon: &AddonInfo, package_folders: &[String]) -> bool {
+    if addon.folders.len() <= 1 {
+        return true;
+    }
+    let package_folders = package_folders
+        .iter()
+        .map(|folder| folder.to_ascii_lowercase())
+        .collect::<BTreeSet<_>>();
+    !package_folders.is_empty()
+        && addon
+            .folders
+            .iter()
+            .all(|folder| package_folders.contains(&folder.to_ascii_lowercase()))
+}
+
 fn extract_release_version(value: &str) -> Option<String> {
     let characters: Vec<char> = trim_archive_extension(value).chars().collect();
     let mut index = 0;
@@ -766,7 +784,10 @@ struct CurseCategory {
 
 #[cfg(test)]
 mod tests {
-    use super::{display_version, package_folders, CurseFile, CurseFileModule};
+    use super::{
+        display_version, package_covers_local_folders, package_folders, CurseFile, CurseFileModule,
+    };
+    use crate::models::AddonInfo;
 
     #[test]
     fn extracts_a_comparable_version_from_curseforge_release_names() {
@@ -802,5 +823,37 @@ mod tests {
             package_folders(&details_release),
             vec!["Details", "Details_DataStorage"]
         );
+    }
+
+    #[test]
+    fn refuses_to_update_a_local_group_not_covered_by_remote_modules() {
+        let addon = AddonInfo {
+            id: "local-package:example".into(),
+            title: "Example".into(),
+            notes: String::new(),
+            author: String::new(),
+            version: "1.0".into(),
+            interface_version: "110200".into(),
+            source: "unknown".into(),
+            source_id: None,
+            folder_name: "Example".into(),
+            folders: vec!["Example".into(), "Example_Independent".into()],
+            inferred_folders: vec!["Example_Independent".into()],
+            package_folders: Vec::new(),
+            path: "/AddOns/Example".into(),
+            status: "untracked".into(),
+            latest_version: None,
+            latest_file_id: None,
+            latest_download_url: None,
+            website_url: None,
+            error: None,
+            modified_at: None,
+        };
+
+        assert!(!package_covers_local_folders(&addon, &["Example".into()]));
+        assert!(package_covers_local_folders(
+            &addon,
+            &["example".into(), "EXAMPLE_INDEPENDENT".into()]
+        ));
     }
 }

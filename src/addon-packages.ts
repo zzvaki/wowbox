@@ -33,6 +33,7 @@ function applyResult(
     source: result.sourceId ? "curseforge" : addon.source,
     sourceId: result.sourceId || addon.sourceId,
     packageFolders: result.packageFolders ?? addon.packageFolders,
+    inferredFolders: result.sourceId ? [] : addon.inferredFolders,
     latestVersion: result.latestVersion,
     latestFileId: result.latestFileId,
     latestDownloadUrl: result.downloadUrl,
@@ -133,6 +134,11 @@ export function applyAndGroupUpdateResults(
       source: "curseforge",
       sourceId,
       folders,
+      inferredFolders: remote?.sourceId
+        ? []
+        : uniqueFolders(
+            members.flatMap((addon) => addon.inferredFolders ?? []),
+          ),
       packageFolders,
       status: strongestStatus(members),
       modifiedAt,

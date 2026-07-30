@@ -40,6 +40,7 @@ export interface AddonInfo {
   sourceId?: string;
   folderName: string;
   folders: string[];
+  inferredFolders?: string[];
   packageFolders?: string[];
   path: string;
   status: AddonStatus;

@@ -186,6 +186,7 @@ mod tests {
             source_id: None,
             folder_name: folder_name.into(),
             folders: vec![folder_name.into()],
+            inferred_folders: Vec::new(),
             package_folders: Vec::new(),
             path: format!("/AddOns/{folder_name}"),
             status: "untracked".into(),
