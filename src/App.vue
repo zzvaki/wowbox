@@ -156,6 +156,10 @@ const clientPathOptions = computed(() => [
   { flavor: "beta" as const, label: gameFlavorLabel("beta"), folder: "_beta_" },
 ]);
 
+const dataSourceOptions = computed(() => [
+  { label: t("curseForgeOnly"), value: "curseforge" },
+]);
+
 const installations = ref<GameInstallation[]>([]);
 const activeInstallationId = ref("");
 const addons = ref<AddonInfo[]>([]);
@@ -1181,19 +1185,20 @@ watch(
           :close-on-esc="false"
         >
           <div class="settings-section">
-            <div class="settings-section-title">
-              <Settings2 :size="18" />
-              <div>
-                <strong>{{ t("language") }}</strong>
-                <span>{{ t("languageHelp") }}</span>
+            <div class="settings-inline-field">
+              <div class="settings-section-title">
+                <Settings2 :size="18" />
+                <div>
+                  <strong>{{ t("language") }}</strong>
+                  <span>{{ t("languageHelp") }}</span>
+                </div>
               </div>
-            </div>
-            <n-form-item :label="t('language')">
               <n-select
                 v-model:value="settingsDraft.language"
                 :options="languageOptions"
+                :aria-label="t('language')"
               />
-            </n-form-item>
+            </div>
           </div>
 
           <div class="settings-divider" />
@@ -1275,18 +1280,20 @@ watch(
           <div class="settings-divider" />
 
           <div class="settings-section">
-            <div class="settings-section-title">
-              <ShieldCheck :size="18" />
-              <div>
-                <strong>{{ t("dataSources") }}</strong>
-                <span>{{ t("dataSourcesHelp") }}</span>
+            <div class="settings-inline-field">
+              <div class="settings-section-title">
+                <ShieldCheck :size="18" />
+                <div>
+                  <strong>{{ t("dataSources") }}</strong>
+                  <span>{{ t("dataSourcesHelp") }}</span>
+                </div>
               </div>
+              <n-select
+                value="curseforge"
+                :options="dataSourceOptions"
+                :aria-label="t('dataSources')"
+              />
             </div>
-            <n-form-item :label="t('source')">
-              <n-tag type="success" :bordered="false">
-                {{ t("curseForgeOnly") }}
-              </n-tag>
-            </n-form-item>
             <div class="setting-toggle">
               <div>
                 <strong>{{ t("checkOnLaunch") }}</strong>
