@@ -9,7 +9,6 @@ export type GameFlavor =
   | "beta";
 
 export type AddonSource = "curseforge" | "wowinterface" | "unknown";
-export type PluginDataSource = "curseforge" | "wowinterface";
 export type AppLocale = "zh-CN" | "zh-TW" | "en-US" | "ja-JP";
 export type AddonStatus =
   | "current"
@@ -130,8 +129,5 @@ export interface AppSettings {
   language: AppLocale;
   gameRoot: string;
   clientPaths: Partial<Record<GameFlavor, string>>;
-  pluginDataSource: PluginDataSource;
-  curseforgeApiKey: string;
-  rememberApiKey: boolean;
   checkOnLaunch: boolean;
 }

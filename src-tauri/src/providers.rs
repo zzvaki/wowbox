@@ -17,18 +17,9 @@ const WOW_GAME_ID: u64 = 1;
 pub async fn check_updates(
     addons: Vec<AddonInfo>,
     flavor: String,
-    provider: String,
-    user_curseforge_api_key: Option<String>,
 ) -> Result<Vec<UpdateCheckResult>, String> {
-    match provider.as_str() {
-        "curseforge" => {}
-        "wowinterface" => {
-            return Err("WoWInterface 数据源正在开发中；一期请使用 CurseForge。".into())
-        }
-        _ => return Err("不支持的数据源。".into()),
-    }
-    let api_key = curseforge_api_key(user_curseforge_api_key.as_deref()).ok_or_else(|| {
-        "未配置 CurseForge API Key。请填写个人 Key，或在构建时提供默认 Key。".to_string()
+    let api_key = curseforge_api_key().ok_or_else(|| {
+        "未配置 CurseForge API Key。请在项目根目录的 .env.local 中配置后重新构建。".to_string()
     })?;
     let client = Client::builder()
         .user_agent(format!("WowBox/{}", env!("CARGO_PKG_VERSION")))
@@ -173,15 +164,9 @@ async fn check_curseforge(
     }
 }
 
-pub async fn fetch_addon_details(
-    addon: AddonInfo,
-    flavor: String,
-    user_curseforge_api_key: Option<String>,
-) -> AddonDetailsResponse {
+pub async fn fetch_addon_details(addon: AddonInfo, flavor: String) -> AddonDetailsResponse {
     let mut requests = Vec::new();
-    match fetch_addon_details_with_trace(addon, flavor, user_curseforge_api_key, &mut requests)
-        .await
-    {
+    match fetch_addon_details_with_trace(addon, flavor, &mut requests).await {
         Ok(details) => AddonDetailsResponse {
             details: Some(details),
             requests,
@@ -198,14 +183,14 @@ pub async fn fetch_addon_details(
 async fn fetch_addon_details_with_trace(
     addon: AddonInfo,
     flavor: String,
-    user_curseforge_api_key: Option<String>,
     requests: &mut Vec<AddonRequestTrace>,
 ) -> Result<AddonDetails, String> {
     if addon.source == "wowinterface" {
         return Err("当前插件来自 WoWInterface，无法查询 CurseForge 详情。".into());
     }
-    let api_key = curseforge_api_key(user_curseforge_api_key.as_deref())
-        .ok_or_else(|| "未配置 CurseForge API Key。请在设置中填写个人 Key。".to_string())?;
+    let api_key = curseforge_api_key().ok_or_else(|| {
+        "未配置 CurseForge API Key。请在项目根目录的 .env.local 中配置后重新构建。".to_string()
+    })?;
     let client = Client::builder()
         .user_agent(format!("WowBox/{}", env!("CARGO_PKG_VERSION")))
         .build()

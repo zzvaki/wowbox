@@ -42,8 +42,6 @@ export async function scanAddons(
 export async function checkAddonUpdates(
   addons: AddonInfo[],
   flavor: string,
-  provider: string,
-  userCurseforgeApiKey?: string,
 ): Promise<UpdateCheckResult[]> {
   if (!inTauri()) {
     await delay(900);
@@ -52,15 +50,12 @@ export async function checkAddonUpdates(
   return invoke<UpdateCheckResult[]>("check_updates", {
     addons,
     flavor,
-    provider,
-    userCurseforgeApiKey: userCurseforgeApiKey || null,
   });
 }
 
 export async function fetchAddonDetails(
   addon: AddonInfo,
   flavor: string,
-  userCurseforgeApiKey?: string,
 ): Promise<AddonDetailsResponse> {
   if (!inTauri()) {
     await delay(500);
@@ -95,7 +90,6 @@ export async function fetchAddonDetails(
   return invoke<AddonDetailsResponse>("fetch_addon_details", {
     addon,
     flavor,
-    userCurseforgeApiKey: userCurseforgeApiKey || null,
   });
 }
 

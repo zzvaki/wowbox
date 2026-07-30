@@ -36,8 +36,6 @@ import {
   ChevronRight,
   CircleHelp,
   Download,
-  Eye,
-  EyeOff,
   FolderOpen,
   FolderSearch,
   HardDrive,
@@ -76,7 +74,6 @@ import type {
   AppSettings,
   GameFlavor,
   GameInstallation,
-  PluginDataSource,
 } from "@/types";
 
 const themeOverrides: GlobalThemeOverrides = {
@@ -111,9 +108,6 @@ const defaultSettings: AppSettings = {
   language: initialLocale,
   gameRoot: "",
   clientPaths: {},
-  pluginDataSource: "curseforge",
-  curseforgeApiKey: "",
-  rememberApiKey: false,
   checkOnLaunch: false,
 };
 
@@ -163,11 +157,6 @@ const clientPathOptions = computed(() => [
   { flavor: "beta" as const, label: gameFlavorLabel("beta"), folder: "_beta_" },
 ]);
 
-const pluginDataSourceOptions = computed(() => [
-  { label: t("sourceCurseForge"), value: "curseforge" satisfies PluginDataSource },
-  { label: t("sourceWowInterfaceChoice"), value: "wowinterface" satisfies PluginDataSource },
-]);
-
 const installations = ref<GameInstallation[]>([]);
 const activeInstallationId = ref("");
 const addons = ref<AddonInfo[]>([]);
@@ -195,7 +184,6 @@ const detailsRequestStatus = ref<DetailsRequestStatus>("idle");
 const detailsRequestTarget = ref("");
 const detailsRequests = ref<AddonRequestTrace[]>([]);
 const detailsRequestSequence = ref(0);
-const apiKeyVisible = ref(false);
 const settings = ref<AppSettings>(cloneSettings(defaultSettings));
 const settingsDraft = ref<AppSettings>(cloneSettings(defaultSettings));
 const scanCompletedAt = ref<Date | null>(null);
@@ -260,18 +248,19 @@ function loadSettings() {
     const raw = localStorage.getItem("wowbox:settings");
     if (!raw) return;
     const stored = JSON.parse(raw) as Partial<AppSettings>;
-    settings.value = {
-      ...defaultSettings,
-      ...stored,
+    const loadedSettings: AppSettings = {
       language: isAppLocale(stored.language)
         ? stored.language
         : defaultSettings.language,
+      gameRoot:
+        typeof stored.gameRoot === "string"
+          ? stored.gameRoot
+          : defaultSettings.gameRoot,
       clientPaths: stored.clientPaths ?? {},
-      pluginDataSource: stored.pluginDataSource ?? "curseforge",
-      curseforgeApiKey: stored.rememberApiKey
-        ? (stored.curseforgeApiKey ?? "")
-        : "",
+      checkOnLaunch: stored.checkOnLaunch ?? defaultSettings.checkOnLaunch,
     };
+    settings.value = loadedSettings;
+    localStorage.setItem("wowbox:settings", JSON.stringify(loadedSettings));
     locale.value = settings.value.language;
     settingsDraft.value = cloneSettings(settings.value);
   } catch {
@@ -292,16 +281,11 @@ function openSettings() {
   }
   settingsDraft.value = cloneSettings(settings.value);
   expandedSettings.value = [];
-  apiKeyVisible.value = false;
   settingsVisible.value = true;
 }
 
 function persistSettings(value: AppSettings) {
-  const stored = {
-    ...value,
-    curseforgeApiKey: value.rememberApiKey ? value.curseforgeApiKey : "",
-  };
-  localStorage.setItem("wowbox:settings", JSON.stringify(stored));
+  localStorage.setItem("wowbox:settings", JSON.stringify(value));
   settings.value = value;
   locale.value = value.language;
 }
@@ -442,10 +426,6 @@ async function runUpdateCheck() {
   ) {
     return;
   }
-  if (settings.value.pluginDataSource !== "curseforge") {
-    message.info(t("wowInterfacePending"));
-    return;
-  }
   checking.value = true;
   addons.value = addons.value.map((addon) => ({
     ...addon,
@@ -455,8 +435,6 @@ async function runUpdateCheck() {
     const results = await checkAddonUpdates(
       addons.value,
       activeInstallation.value.flavor,
-      settings.value.pluginDataSource,
-      settings.value.curseforgeApiKey,
     );
     const resultMap = new Map(results.map((result) => [result.addonId, result]));
     addons.value = addons.value.map((addon) => {
@@ -693,7 +671,6 @@ function requestStatusFromTraces(
 async function loadAddonDetails(addon: AddonInfo) {
   if (
     addon.source === "wowinterface" ||
-    settings.value.pluginDataSource !== "curseforge" ||
     !activeInstallation.value
   ) {
     return;
@@ -710,7 +687,6 @@ async function loadAddonDetails(addon: AddonInfo) {
     const response = await fetchAddonDetails(
       addon,
       activeInstallation.value.flavor,
-      settings.value.curseforgeApiKey,
     );
     if (
       requestSequence === detailsRequestSequence.value &&
@@ -1355,43 +1331,10 @@ watch(
               </div>
             </div>
             <n-form-item :label="t('source')">
-              <n-select
-                v-model:value="settingsDraft.pluginDataSource"
-                :options="pluginDataSourceOptions"
-              />
+              <n-tag type="success" :bordered="false">
+                {{ t("curseForgeOnly") }}
+              </n-tag>
             </n-form-item>
-            <n-form-item
-              v-if="settingsDraft.pluginDataSource === 'curseforge'"
-              :label="t('personalApiKey')"
-            >
-              <n-input
-                v-model:value="settingsDraft.curseforgeApiKey"
-                :type="apiKeyVisible ? 'text' : 'password'"
-                :placeholder="t('defaultApiKey')"
-              >
-                <template #suffix>
-                  <button
-                    class="input-icon-button"
-                    type="button"
-                    :aria-label="apiKeyVisible ? t('hideKey') : t('showKey')"
-                    @click="apiKeyVisible = !apiKeyVisible"
-                  >
-                    <EyeOff v-if="apiKeyVisible" :size="16" />
-                    <Eye v-else :size="16" />
-                  </button>
-                </template>
-              </n-input>
-            </n-form-item>
-            <div
-              v-if="settingsDraft.pluginDataSource === 'curseforge'"
-              class="setting-toggle"
-            >
-              <div>
-                <strong>{{ t("rememberKey") }}</strong>
-                <span>{{ t("rememberKeyHelp") }}</span>
-              </div>
-              <n-switch v-model:value="settingsDraft.rememberApiKey" />
-            </div>
             <div class="setting-toggle">
               <div>
                 <strong>{{ t("checkOnLaunch") }}</strong>
@@ -1436,7 +1379,6 @@ watch(
               :disabled="
                 !selectedAddon ||
                 selectedAddon.source === 'wowinterface' ||
-                settings.pluginDataSource !== 'curseforge' ||
                 !activeInstallation
               "
               @click="refreshDetails"

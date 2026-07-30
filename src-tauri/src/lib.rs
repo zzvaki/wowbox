@@ -216,19 +216,13 @@ fn scan_addons(
 async fn check_updates(
     addons: Vec<AddonInfo>,
     flavor: String,
-    provider: String,
-    user_curseforge_api_key: Option<String>,
 ) -> Result<Vec<UpdateCheckResult>, String> {
-    providers::check_updates(addons, flavor, provider, user_curseforge_api_key).await
+    providers::check_updates(addons, flavor).await
 }
 
 #[tauri::command]
-async fn fetch_addon_details(
-    addon: AddonInfo,
-    flavor: String,
-    user_curseforge_api_key: Option<String>,
-) -> AddonDetailsResponse {
-    providers::fetch_addon_details(addon, flavor, user_curseforge_api_key).await
+async fn fetch_addon_details(addon: AddonInfo, flavor: String) -> AddonDetailsResponse {
+    providers::fetch_addon_details(addon, flavor).await
 }
 
 #[tauri::command]
