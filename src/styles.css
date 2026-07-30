@@ -35,6 +35,8 @@ button {
   display: flex;
   width: 100%;
   height: 100%;
+  min-height: 0;
+  overflow: hidden;
   background:
     radial-gradient(circle at 74% -10%, rgba(107, 119, 247, 0.08), transparent 32%),
     #f6f7fa;
@@ -42,8 +44,10 @@ button {
 
 .sidebar {
   display: flex;
+  min-height: 0;
   flex: 0 0 238px;
   flex-direction: column;
+  overflow: hidden;
   padding: 28px 18px 20px;
   border-right: 1px solid #e8e9ef;
   background: rgba(255, 255, 255, 0.82);
@@ -124,8 +128,10 @@ button {
 
 .installation-list {
   display: flex;
+  min-height: 0;
   flex-direction: column;
   gap: 5px;
+  overflow-y: auto;
 }
 
 .installation-item {
@@ -303,9 +309,11 @@ button {
 
 .main {
   display: flex;
+  min-height: 0;
   min-width: 0;
   flex: 1;
   flex-direction: column;
+  overflow: hidden;
 }
 
 .topbar {
@@ -370,16 +378,16 @@ button {
   min-height: 0;
   flex: 1;
   flex-direction: column;
-  padding: 20px 30px 14px;
-  overflow-x: auto;
-  overflow-y: hidden;
+  padding: 18px 24px 14px;
+  overflow: hidden;
 }
 
 .addons-panel {
   display: flex;
+  width: 100%;
   min-height: 0;
+  min-width: 0;
   flex: 1;
-  min-width: 920px;
   overflow: hidden;
   border: 1px solid #e5e6ec;
   border-radius: 16px;
@@ -390,6 +398,7 @@ button {
 .addon-tabs {
   display: flex;
   min-height: 0;
+  min-width: 0;
   flex: 1;
   flex-direction: column;
 }
@@ -424,8 +433,9 @@ button {
   align-items: center;
   justify-content: space-between;
   flex: 0 0 auto;
+  gap: 16px;
   min-height: 82px;
-  padding: 16px 22px;
+  padding: 16px;
   border-bottom: 1px solid #ececf1;
 }
 
@@ -444,6 +454,7 @@ button {
 
 .panel-heading {
   min-width: 0;
+  flex: 1;
 }
 
 .panel-title-line {
@@ -467,36 +478,38 @@ button {
 
 .toolbar-controls {
   display: flex;
+  min-width: 0;
+  flex: 0 1 auto;
   gap: 8px;
   align-items: center;
 }
 
 .search-input {
-  width: 220px;
+  width: clamp(160px, 20vw, 210px);
 }
 
 .filter-select {
-  width: 137px;
+  width: 126px;
 }
 
 .table-header,
 .addon-row {
   display: grid;
   grid-template-columns:
-    minmax(280px, 2fr)
-    minmax(96px, 0.62fr)
-    minmax(96px, 0.62fr)
-    minmax(110px, 0.7fr)
-    minmax(110px, 0.72fr)
-    54px;
-  column-gap: 12px;
+    minmax(180px, 2fr)
+    minmax(70px, 0.58fr)
+    minmax(70px, 0.58fr)
+    minmax(92px, 0.7fr)
+    minmax(100px, 0.72fr)
+    40px;
+  column-gap: 8px;
   align-items: center;
 }
 
 .table-header {
   flex: 0 0 auto;
   min-height: 37px;
-  padding: 0 20px;
+  padding: 0 16px;
   border-bottom: 1px solid #eeeef2;
   color: #a7a9b4;
   background: #fbfbfd;
@@ -514,7 +527,7 @@ button {
 .addon-row {
   position: relative;
   min-height: 73px;
-  padding: 10px 20px;
+  padding: 10px 16px;
   border-bottom: 1px solid #f0f0f4;
   transition: background 140ms ease;
 }
@@ -777,10 +790,10 @@ button {
 .skeleton-row {
   display: grid;
   min-height: 73px;
-  grid-template-columns: 42px minmax(220px, 1fr) 100px 100px 90px;
-  gap: 11px;
+  grid-template-columns: 42px minmax(150px, 1fr) repeat(3, minmax(64px, 0.5fr));
+  gap: 8px;
   align-items: center;
-  padding: 10px 20px;
+  padding: 10px 16px;
   border-bottom: 1px solid #f0f0f4;
 }
 

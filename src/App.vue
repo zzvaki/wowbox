@@ -823,6 +823,7 @@ watch(
     :theme-overrides="themeOverrides"
     :locale="naiveLocale"
     :date-locale="naiveDateLocale"
+    style="height: 100%;"
   >
     <n-message-provider>
       <div class="app-shell">
