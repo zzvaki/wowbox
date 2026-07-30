@@ -19,6 +19,15 @@ const PRODUCT_FOLDERS: [(&str, &str, &str); 9] = [
     ("_beta_", "beta", "Beta"),
 ];
 
+struct ScannedFolder {
+    folder_name: String,
+    folder_path: PathBuf,
+    metadata: HashMap<String, String>,
+    source: &'static str,
+    source_id: Option<String>,
+    modified_at: Option<String>,
+}
+
 pub fn detect_installations(custom_root: Option<String>) -> Result<Vec<GameInstallation>, String> {
     let roots = candidate_roots(custom_root);
     let root = roots
@@ -67,19 +76,28 @@ pub fn detect_installations(custom_root: Option<String>) -> Result<Vec<GameInsta
     }
 }
 
+#[cfg(test)]
 pub fn scan_addons(
+    addons_path: &str,
+    flavor: &str,
+    locale: &str,
+) -> Result<Vec<AddonInfo>, String> {
+    scan_addons_with_known_sources(addons_path, flavor, locale, &HashMap::new())
+}
+
+pub fn scan_addons_with_known_sources(
     addons_path: &str,
     _flavor: &str,
     locale: &str,
+    known_sources: &HashMap<String, (String, String)>,
 ) -> Result<Vec<AddonInfo>, String> {
     let root = Path::new(addons_path);
     if !root.is_dir() {
         return Err(format!("插件目录不存在：{}", root.display()));
     }
 
-    let mut grouped: BTreeMap<String, AddonInfo> = BTreeMap::new();
     let entries = fs::read_dir(root).map_err(|error| format!("无法读取插件目录：{error}"))?;
-
+    let mut scanned = Vec::new();
     for entry in entries.flatten() {
         let folder_path = entry.path();
         if !folder_path.is_dir() || should_ignore_folder(&folder_path) {
@@ -91,16 +109,61 @@ pub fn scan_addons(
         };
         let metadata = parse_toc(&toc_path)?;
         let (source, source_id) = detect_source(&metadata);
-        let group_id = match &source_id {
-            Some(id) => format!("{source}:{id}"),
-            None => format!("local:{}", folder_name.to_lowercase()),
-        };
-        let modified_at = folder_modified_at(&folder_path);
+        scanned.push(ScannedFolder {
+            folder_name,
+            modified_at: folder_modified_at(&folder_path),
+            folder_path,
+            metadata,
+            source,
+            source_id,
+        });
+    }
 
+    let resolved_sources = scanned
+        .iter()
+        .map(|folder| {
+            folder
+                .source_id
+                .as_ref()
+                .map(|source_id| (folder.source.to_string(), source_id.clone()))
+                .or_else(|| {
+                    known_sources
+                        .get(&folder.folder_name.to_ascii_lowercase())
+                        .cloned()
+                })
+        })
+        .collect::<Vec<_>>();
+    let mut order = (0..scanned.len()).collect::<Vec<_>>();
+    order.sort_by_key(|index| {
+        (
+            resolved_sources[*index].is_none(),
+            scanned[*index].folder_name.to_ascii_lowercase(),
+        )
+    });
+
+    let mut grouped: BTreeMap<String, AddonInfo> = BTreeMap::new();
+    for index in order {
+        let folder = &scanned[index];
+        let folder_name = &folder.folder_name;
+        let folder_path = &folder.folder_path;
+        let metadata = &folder.metadata;
+        let resolved_source = resolved_sources[index].as_ref();
+        let (source, source_id, group_id) = match resolved_source {
+            Some((source, source_id)) => (
+                source.as_str(),
+                Some(source_id.clone()),
+                format!("{source}:{source_id}"),
+            ),
+            None => (
+                "unknown",
+                None,
+                format!("local:{}", folder_name.to_ascii_lowercase()),
+            ),
+        };
         if let Some(existing) = grouped.get_mut(&group_id) {
             existing.folders.push(folder_name.clone());
-            let title = clean_wow_text(&localized_value(&metadata, "title", locale));
-            let notes = clean_wow_text(&localized_value(&metadata, "notes", locale));
+            let title = clean_wow_text(&localized_value(metadata, "title", locale));
+            let notes = clean_wow_text(&localized_value(metadata, "notes", locale));
             let author = clean_wow_text(metadata.get("author").map(String::as_str).unwrap_or(""));
             let version = metadata
                 .get("version")
@@ -111,8 +174,8 @@ pub fn scan_addons(
             // Prefer the first TOC with a real title over a synthetic folder-name title.
             if !title.is_empty() && existing.title == existing.folder_name {
                 existing.title = title;
-                existing.folder_name = folder_name;
-                existing.path = path_string(&folder_path);
+                existing.folder_name = folder_name.clone();
+                existing.path = path_string(folder_path);
             }
             if existing.notes.is_empty() && !notes.is_empty() {
                 existing.notes = notes;
@@ -131,12 +194,12 @@ pub fn scan_addons(
                 }
             }
             if existing.modified_at.is_none() {
-                existing.modified_at = modified_at;
+                existing.modified_at = folder.modified_at.clone();
             }
             continue;
         }
 
-        let title = localized_value(&metadata, "title", locale);
+        let title = localized_value(metadata, "title", locale);
         let addon = AddonInfo {
             id: group_id.clone(),
             title: if title.is_empty() {
@@ -144,7 +207,7 @@ pub fn scan_addons(
             } else {
                 clean_wow_text(&title)
             },
-            notes: clean_wow_text(&localized_value(&metadata, "notes", locale)),
+            notes: clean_wow_text(&localized_value(metadata, "notes", locale)),
             author: clean_wow_text(metadata.get("author").map(String::as_str).unwrap_or("")),
             version: metadata
                 .get("version")
@@ -155,8 +218,9 @@ pub fn scan_addons(
             source: source.to_string(),
             source_id,
             folder_name: folder_name.clone(),
-            folders: vec![folder_name],
-            path: path_string(&folder_path),
+            folders: vec![folder_name.clone()],
+            package_folders: Vec::new(),
+            path: path_string(folder_path),
             status: if source == "unknown" {
                 "untracked".into()
             } else {
@@ -167,7 +231,7 @@ pub fn scan_addons(
             latest_download_url: None,
             website_url: None,
             error: None,
-            modified_at,
+            modified_at: folder.modified_at.clone(),
         };
         grouped.insert(group_id, addon);
     }
@@ -370,8 +434,8 @@ fn path_string(path: &Path) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{detect_installations, scan_addons};
-    use std::fs;
+    use super::{detect_installations, scan_addons, scan_addons_with_known_sources};
+    use std::{collections::HashMap, fs};
     use tempfile::tempdir;
 
     #[test]
@@ -500,5 +564,76 @@ mod tests {
             .expect("English CurseForge add-on");
         assert_eq!(english_details.title, "Details! Damage Meter");
         assert_eq!(english_details.notes, "Combat statistics");
+    }
+
+    #[test]
+    fn does_not_group_an_unconfirmed_extension_with_its_dependency() {
+        let temporary_directory = tempdir().expect("create temporary directory");
+        let addons_path = temporary_directory.path().join("Interface").join("AddOns");
+        for (folder, toc) in [
+            (
+                "ExampleSuite",
+                "## Title: Example Suite\n## X-Curse-Project-ID: 42\n",
+            ),
+            (
+                "ExampleSuite_Independent",
+                "## Title: Independent Extension\n## Dependencies: ExampleSuite\n",
+            ),
+        ] {
+            let path = addons_path.join(folder);
+            fs::create_dir_all(&path).expect("create add-on directory");
+            fs::write(path.join(format!("{folder}.toc")), toc).expect("write toc");
+        }
+
+        let addons =
+            scan_addons(&addons_path.to_string_lossy(), "retail", "en-US").expect("scan addons");
+
+        assert_eq!(addons.len(), 2);
+        assert!(addons
+            .iter()
+            .any(|addon| addon.id == "local:examplesuite_independent"));
+    }
+
+    #[test]
+    fn restores_a_confirmed_multi_folder_package_on_later_scans() {
+        let temporary_directory = tempdir().expect("create temporary directory");
+        let addons_path = temporary_directory.path().join("Interface").join("AddOns");
+        for folder in ["ModuleCore", "UnrelatedFolder", "ModuleWithoutDependency"] {
+            let path = addons_path.join(folder);
+            fs::create_dir_all(&path).expect("create add-on directory");
+            fs::write(
+                path.join(format!("{folder}.toc")),
+                format!("## Title: {folder}\n## Version: 1.0\n"),
+            )
+            .expect("write toc");
+        }
+        let known_sources = HashMap::from([
+            ("modulecore".into(), ("curseforge".into(), "1234".into())),
+            (
+                "modulewithoutdependency".into(),
+                ("curseforge".into(), "1234".into()),
+            ),
+        ]);
+
+        let addons = scan_addons_with_known_sources(
+            &addons_path.to_string_lossy(),
+            "retail",
+            "en-US",
+            &known_sources,
+        )
+        .expect("scan known package");
+        let package = addons
+            .iter()
+            .find(|addon| addon.id == "curseforge:1234")
+            .expect("restored package");
+
+        assert_eq!(addons.len(), 2);
+        assert_eq!(
+            package.folders,
+            vec!["ModuleCore", "ModuleWithoutDependency"]
+        );
+        assert!(addons
+            .iter()
+            .any(|addon| addon.folder_name == "UnrelatedFolder"));
     }
 }

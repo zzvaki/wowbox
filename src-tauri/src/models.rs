@@ -26,6 +26,8 @@ pub struct AddonInfo {
     pub source_id: Option<String>,
     pub folder_name: String,
     pub folders: Vec<String>,
+    #[serde(default)]
+    pub package_folders: Vec<String>,
     pub path: String,
     pub status: String,
     pub latest_version: Option<String>,
@@ -49,6 +51,8 @@ pub struct UpdateCheckResult {
     pub latest_file_id: Option<String>,
     pub download_url: Option<String>,
     pub website_url: Option<String>,
+    #[serde(default)]
+    pub package_folders: Vec<String>,
     pub error: Option<String>,
 }
 
@@ -65,6 +69,7 @@ impl UpdateCheckResult {
             latest_file_id: None,
             download_url: None,
             website_url: None,
+            package_folders: Vec::new(),
             error: None,
         }
     }
@@ -81,6 +86,7 @@ impl UpdateCheckResult {
             latest_file_id: None,
             download_url: None,
             website_url: None,
+            package_folders: Vec::new(),
             error: Some(error.into()),
         }
     }
@@ -149,6 +155,8 @@ pub struct UpdateResult {
     pub version: String,
     pub backup_path: String,
     pub installed_folders: Vec<String>,
+    pub folder_name: String,
+    pub path: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

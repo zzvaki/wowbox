@@ -1,3 +1,4 @@
+mod addon_registry;
 mod models;
 mod provider_config;
 mod providers;
@@ -111,7 +112,7 @@ fn detect_installations(
         None => None,
     };
     let is_custom_root = custom_root.is_some();
-    let installations = scanner::detect_installations(custom_root)?;
+    let mut installations = scanner::detect_installations(custom_root)?;
     let persisted_roots = if is_custom_root {
         let mut roots = authorized_game_roots
             .0
@@ -129,13 +130,26 @@ fn detect_installations(
     if let Some(roots) = persisted_roots {
         persist_authorized_game_roots(&app, &roots)?;
     }
+    let mut detected_addon_roots = Vec::new();
+    for installation in &mut installations {
+        let addons_root = std::fs::canonicalize(&installation.addons_path)
+            .map_err(|error| format!("无法确认插件目录：{error}"))?;
+        let known_sources = addon_registry::known_sources(&app, &addons_root);
+        if let Ok(addons) = scanner::scan_addons_with_known_sources(
+            &installation.addons_path,
+            &installation.flavor,
+            "en-US",
+            &known_sources,
+        ) {
+            installation.addon_count = addons.len();
+        }
+        detected_addon_roots.push(addons_root);
+    }
     let mut roots = managed_addon_roots
         .0
         .lock()
         .map_err(|_| "插件目录状态不可用。".to_string())?;
-    for installation in &installations {
-        let addons_root = std::fs::canonicalize(&installation.addons_path)
-            .map_err(|error| format!("无法确认插件目录：{error}"))?;
+    for addons_root in detected_addon_roots {
         roots.insert(addons_root);
     }
     Ok(installations)
@@ -194,6 +208,7 @@ fn sync_authorized_game_roots(
 
 #[tauri::command]
 fn scan_addons(
+    app: tauri::AppHandle,
     addons_path: String,
     flavor: String,
     locale: String,
@@ -209,15 +224,30 @@ fn scan_addons(
     if !is_managed {
         return Err("插件目录尚未由客户端检测流程授权，请先重新检测游戏目录。".into());
     }
-    scanner::scan_addons(&addons_path, &flavor, &locale)
+    let known_sources = addon_registry::known_sources(&app, &root);
+    scanner::scan_addons_with_known_sources(&addons_path, &flavor, &locale, &known_sources)
 }
 
 #[tauri::command]
 async fn check_updates(
+    app: tauri::AppHandle,
     addons: Vec<AddonInfo>,
     flavor: String,
 ) -> Result<Vec<UpdateCheckResult>, String> {
-    providers::check_updates(addons, flavor).await
+    let addons_for_registry = addons.clone();
+    let addons_root = addons
+        .first()
+        .and_then(|addon| Path::new(&addon.path).parent())
+        .and_then(|path| fs::canonicalize(path).ok());
+    let results = providers::check_updates(addons, flavor).await?;
+    if let Some(addons_root) = addons_root {
+        if let Err(error) =
+            addon_registry::remember_packages(&app, &addons_root, &addons_for_registry, &results)
+        {
+            eprintln!("无法保存插件目录关联：{error}");
+        }
+    }
+    Ok(results)
 }
 
 #[tauri::command]

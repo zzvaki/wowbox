@@ -64,6 +64,7 @@ import {
   translate,
   type TranslationKey,
 } from "@/i18n";
+import { applyAndGroupUpdateResults } from "@/addon-packages";
 import type {
   AddonInfo,
   AddonRequestTrace,
@@ -407,6 +408,7 @@ async function runScan(showNotice = true) {
       activeInstallation.value.flavor,
       locale.value,
     );
+    activeInstallation.value.addonCount = addons.value.length;
     if (showNotice) {
       message.success(t("addonsDetected", { count: addons.value.length }));
     }
@@ -436,26 +438,9 @@ async function runUpdateCheck() {
       addons.value,
       activeInstallation.value.flavor,
     );
-    const resultMap = new Map(results.map((result) => [result.addonId, result]));
-    addons.value = addons.value.map((addon) => {
-      const result = resultMap.get(addon.id);
-      if (!result) return { ...addon, status: "error" };
-      return {
-        ...addon,
-        status: result.status,
-        title: result.title || addon.title,
-        author: result.author || addon.author,
-        notes: result.summary || addon.notes,
-        source: result.sourceId ? ("curseforge" as const) : addon.source,
-        sourceId: result.sourceId || addon.sourceId,
-        latestVersion: result.latestVersion,
-        latestFileId: result.latestFileId,
-        latestDownloadUrl: result.downloadUrl,
-        websiteUrl: result.websiteUrl,
-        error: result.error,
-      };
-    });
-    const available = results.filter((result) => result.status === "update").length;
+    addons.value = applyAndGroupUpdateResults(addons.value, results);
+    activeInstallation.value.addonCount = addons.value.length;
+    const available = addons.value.filter((addon) => addon.status === "update").length;
     message.success(
       available ? t("updatesFound", { count: available }) : t("allUpToDate"),
     );
@@ -492,6 +477,10 @@ async function updateOne(
       downloadUrl: addon.latestDownloadUrl,
     });
     addon.version = result.version;
+    addon.folderName = result.folderName;
+    addon.path = result.path;
+    addon.folders = result.installedFolders;
+    addon.packageFolders = result.installedFolders;
     addon.status = "current";
     if (!quiet) message.success(t("addonUpdated", { title: addon.title }));
     return true;
@@ -538,10 +527,7 @@ async function deleteOne(addon: AddonInfo) {
     const result = await deleteInstalledAddon(addon);
     addons.value = addons.value.filter((item) => item.id !== addon.id);
     if (activeInstallation.value) {
-      activeInstallation.value.addonCount = Math.max(
-        0,
-        activeInstallation.value.addonCount - 1,
-      );
+      activeInstallation.value.addonCount = addons.value.length;
     }
     message.success(
       t("addonDeleted", {

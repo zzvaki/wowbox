@@ -103,6 +103,8 @@ export async function installAddonUpdate(
       version: request.addon.latestVersion ?? request.addon.version,
       backupPath: ".wowbox-backups/mock",
       installedFolders: request.addon.folders,
+      folderName: request.addon.folderName,
+      path: request.addon.path,
     };
   }
   return invoke<UpdateResult>("update_addon", { request });

@@ -136,12 +136,14 @@ export function mockCheckUpdates(addons: AddonInfo[]): UpdateCheckResult[] {
         latestVersion: addon.latestVersion,
         latestFileId: addon.latestFileId,
         downloadUrl: addon.latestDownloadUrl,
+        packageFolders: addon.folders,
       };
     }
     return {
       addonId: addon.id,
       status: "current",
       latestVersion: addon.version,
+      packageFolders: addon.folders,
     };
   });
 }

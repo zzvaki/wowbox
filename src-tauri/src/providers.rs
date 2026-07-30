@@ -9,7 +9,7 @@ use crate::{
 use futures::{stream, StreamExt};
 use reqwest::{Client, RequestBuilder};
 use serde::{de::DeserializeOwned, Deserialize};
-use std::time::Instant;
+use std::{collections::BTreeSet, time::Instant};
 
 const CURSEFORGE_API: &str = "https://api.curseforge.com/v1";
 const WOW_GAME_ID: u64 = 1;
@@ -137,6 +137,7 @@ async fn check_curseforge(
     };
 
     let version = display_version(&file);
+    let package_folders = package_folders(&file);
     let status = if is_remote_newer(&addon.version, &version) {
         "update"
     } else {
@@ -160,6 +161,7 @@ async fn check_curseforge(
         latest_file_id: Some(file.id.to_string()),
         download_url: file.download_url,
         website_url,
+        package_folders,
         error: None,
     }
 }
@@ -632,6 +634,19 @@ fn display_version(file: &CurseFile) -> String {
         .unwrap_or_else(|| trim_archive_extension(&file.file_name).to_string())
 }
 
+fn package_folders(file: &CurseFile) -> Vec<String> {
+    file.modules
+        .iter()
+        .filter_map(|module| {
+            let name = module.name.trim();
+            (!name.is_empty() && name != "." && name != ".." && !name.contains(['/', '\\']))
+                .then(|| name.to_string())
+        })
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
+}
+
 fn extract_release_version(value: &str) -> Option<String> {
     let characters: Vec<char> = trim_archive_extension(value).chars().collect();
     let mut index = 0;
@@ -697,6 +712,13 @@ struct CurseFile {
     release_type: u8,
     file_date: String,
     download_url: Option<String>,
+    #[serde(default)]
+    modules: Vec<CurseFileModule>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CurseFileModule {
+    name: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -744,7 +766,7 @@ struct CurseCategory {
 
 #[cfg(test)]
 mod tests {
-    use super::{display_version, CurseFile};
+    use super::{display_version, package_folders, CurseFile, CurseFileModule};
 
     #[test]
     fn extracts_a_comparable_version_from_curseforge_release_names() {
@@ -755,6 +777,14 @@ mod tests {
             release_type: 1,
             file_date: "2026-07-29T00:00:00Z".into(),
             download_url: Some("https://example.invalid/details.zip".into()),
+            modules: vec![
+                CurseFileModule {
+                    name: "Details".into(),
+                },
+                CurseFileModule {
+                    name: "Details_DataStorage".into(),
+                },
+            ],
         };
         let plater_release = CurseFile {
             id: 2,
@@ -763,9 +793,14 @@ mod tests {
             release_type: 1,
             file_date: "2026-07-29T00:00:00Z".into(),
             download_url: Some("https://example.invalid/plater.zip".into()),
+            modules: Vec::new(),
         };
 
         assert_eq!(display_version(&details_release), "11.2.0.14010");
         assert_eq!(display_version(&plater_release), "v612-Retail");
+        assert_eq!(
+            package_folders(&details_release),
+            vec!["Details", "Details_DataStorage"]
+        );
     }
 }

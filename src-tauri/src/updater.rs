@@ -60,26 +60,22 @@ pub async fn update_addon(
     if installed_folders.is_empty() {
         return Err("压缩包中没有找到插件目录。".into());
     }
-    let known_folders: BTreeSet<&str> = request
-        .addon
-        .folders
+    validate_archive_folders(&request.addon, &installed_folders)?;
+
+    let mut folders_to_backup: BTreeSet<String> = request.addon.folders.iter().cloned().collect();
+    folders_to_backup.insert(request.addon.folder_name.clone());
+    let folders_to_backup_keys = folders_to_backup
         .iter()
-        .map(String::as_str)
-        .chain(std::iter::once(request.addon.folder_name.as_str()))
-        .collect();
-    let unexpected_folders: Vec<&String> = installed_folders
-        .iter()
-        .filter(|folder| !known_folders.contains(folder.as_str()))
-        .collect();
-    if !unexpected_folders.is_empty() {
-        return Err(format!(
-            "压缩包包含未关联的顶层目录（{}），为避免覆盖其他插件已取消更新。",
-            unexpected_folders
-                .iter()
-                .map(|folder| folder.as_str())
-                .collect::<Vec<_>>()
-                .join("、")
-        ));
+        .map(|folder| folder_key(folder))
+        .collect::<BTreeSet<_>>();
+    for folder in &installed_folders {
+        if addons_root.join(folder).exists()
+            && !folders_to_backup_keys.contains(&folder_key(folder))
+        {
+            return Err(format!(
+                "插件包目录 {folder} 与另一个已安装插件冲突，已取消更新。"
+            ));
+        }
     }
 
     let backup_root = addons_root.join(".wowbox-backups").join(format!(
@@ -89,8 +85,6 @@ pub async fn update_addon(
     ));
     fs::create_dir_all(&backup_root).map_err(|error| format!("无法创建备份目录：{error}"))?;
 
-    let mut folders_to_backup: BTreeSet<String> = request.addon.folders.iter().cloned().collect();
-    folders_to_backup.insert(request.addon.folder_name.clone());
     let mut backed_up = Vec::new();
 
     for folder in &folders_to_backup {
@@ -125,6 +119,16 @@ pub async fn update_addon(
         installed.push(folder.clone());
     }
 
+    let folder_name = installed
+        .iter()
+        .find(|folder| folder.as_str() == request.addon.folder_name)
+        .cloned()
+        .or_else(|| installed.first().cloned())
+        .ok_or_else(|| "安装完成后没有找到插件主目录。".to_string())?;
+    let path = addons_root
+        .join(&folder_name)
+        .to_string_lossy()
+        .into_owned();
     Ok(UpdateResult {
         addon_id: request.addon.id,
         version: request
@@ -133,6 +137,8 @@ pub async fn update_addon(
             .unwrap_or(request.addon.version),
         backup_path: backup_root.to_string_lossy().into_owned(),
         installed_folders: installed,
+        folder_name,
+        path,
     })
 }
 
@@ -261,6 +267,7 @@ fn extract_archive(bytes: &[u8], destination: &Path) -> Result<Vec<String>, Stri
 
 fn validate_addon_target(addon: &AddonInfo, addons_root: &Path) -> Result<(), String> {
     let mut folders = addon.folders.clone();
+    folders.extend(addon.package_folders.iter().cloned());
     if !folders.iter().any(|folder| folder == &addon.folder_name) {
         folders.push(addon.folder_name.clone());
     }
@@ -278,6 +285,41 @@ fn validate_addon_target(addon: &AddonInfo, addons_root: &Path) -> Result<(), St
         return Err("插件路径与已扫描目录不一致，已取消更新。".into());
     }
     Ok(())
+}
+
+fn validate_archive_folders(addon: &AddonInfo, installed_folders: &[String]) -> Result<(), String> {
+    let known_folders = if addon.package_folders.is_empty() {
+        addon
+            .folders
+            .iter()
+            .map(String::as_str)
+            .chain(std::iter::once(addon.folder_name.as_str()))
+            .map(folder_key)
+            .collect::<BTreeSet<_>>()
+    } else {
+        addon
+            .package_folders
+            .iter()
+            .map(|folder| folder_key(folder))
+            .collect::<BTreeSet<_>>()
+    };
+    let unexpected_folders = installed_folders
+        .iter()
+        .filter(|folder| !known_folders.contains(&folder_key(folder)))
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    if unexpected_folders.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "压缩包包含未关联的顶层目录（{}），为避免覆盖其他插件已取消更新。",
+            unexpected_folders.join("、")
+        ))
+    }
+}
+
+fn folder_key(folder: &str) -> String {
+    folder.to_ascii_lowercase()
 }
 
 fn validate_download_url(download_url: &str) -> Result<(), String> {
@@ -350,7 +392,7 @@ fn safe_name(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::delete_addon;
+    use super::{delete_addon, validate_archive_folders};
     use crate::models::AddonInfo;
     use std::fs;
     #[cfg(unix)]
@@ -369,6 +411,7 @@ mod tests {
             source_id: None,
             folder_name: "ExampleAddon".into(),
             folders: vec!["ExampleAddon".into(), "ExampleAddon_Config".into()],
+            package_folders: Vec::new(),
             path: path.to_string_lossy().into_owned(),
             status: "untracked".into(),
             latest_version: None,
@@ -401,6 +444,42 @@ mod tests {
         assert!(std::path::Path::new(&result.trash_path)
             .join("ExampleAddon_Config")
             .is_dir());
+    }
+
+    #[test]
+    fn accepts_every_folder_declared_by_the_curseforge_package() {
+        let root = tempdir().expect("temporary add-on root");
+        let primary = root.path().join("ExampleAddon");
+        let mut addon = test_addon(&primary);
+        addon.package_folders = vec![
+            "ExampleAddon".into(),
+            "ExampleAddon_Config".into(),
+            "ExampleAddon_NewModule".into(),
+        ];
+
+        validate_archive_folders(
+            &addon,
+            &[
+                "ExampleAddon".into(),
+                "ExampleAddon_Config".into(),
+                "ExampleAddon_NewModule".into(),
+            ],
+        )
+        .expect("all official package folders are accepted");
+        validate_archive_folders(
+            &addon,
+            &[
+                "exampleaddon".into(),
+                "exampleaddon_config".into(),
+                "exampleaddon_newmodule".into(),
+            ],
+        )
+        .expect("folder casing changes are accepted on desktop targets");
+
+        let error =
+            validate_archive_folders(&addon, &["ExampleAddon".into(), "UnrelatedAddon".into()])
+                .expect_err("unrelated top-level folder must be rejected");
+        assert!(error.contains("UnrelatedAddon"));
     }
 
     #[cfg(unix)]

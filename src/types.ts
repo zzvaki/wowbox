@@ -40,6 +40,7 @@ export interface AddonInfo {
   sourceId?: string;
   folderName: string;
   folders: string[];
+  packageFolders?: string[];
   path: string;
   status: AddonStatus;
   latestVersion?: string;
@@ -63,6 +64,7 @@ export interface UpdateCheckResult {
   latestFileId?: string;
   downloadUrl?: string;
   websiteUrl?: string;
+  packageFolders?: string[];
   error?: string;
 }
 
@@ -117,6 +119,8 @@ export interface UpdateResult {
   version: string;
   backupPath: string;
   installedFolders: string[];
+  folderName: string;
+  path: string;
 }
 
 export interface DeleteAddonResult {
