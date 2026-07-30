@@ -366,118 +366,36 @@ button {
 }
 
 .content {
+  display: flex;
   min-height: 0;
   flex: 1;
-  padding: 25px 34px 15px;
-  overflow: auto;
-}
-
-.summary-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 14px;
-  margin-bottom: 18px;
-}
-
-.summary-card {
-  position: relative;
-  display: grid;
-  min-width: 0;
-  grid-template-columns: 40px 1fr;
-  grid-template-rows: auto auto;
-  column-gap: 12px;
-  padding: 16px 17px 14px;
-  overflow: hidden;
-  border: 1px solid #e7e8ee;
-  border-radius: 13px;
-  background: rgba(255, 255, 255, 0.9);
-  box-shadow: 0 2px 7px rgba(32, 35, 54, 0.02);
-}
-
-.summary-card::after {
-  position: absolute;
-  top: -24px;
-  right: -20px;
-  width: 78px;
-  height: 78px;
-  border-radius: 50%;
-  background: rgba(105, 117, 242, 0.035);
-  content: "";
-}
-
-.summary-icon {
-  display: grid;
-  width: 40px;
-  height: 40px;
-  grid-row: 1 / 3;
-  place-items: center;
-  border-radius: 11px;
-}
-
-.summary-icon.purple {
-  color: #6674ed;
-  background: #eef0ff;
-}
-
-.summary-icon.coral {
-  color: #ed806d;
-  background: #fff0ed;
-}
-
-.summary-icon.mint {
-  color: #29aa85;
-  background: #e9faf5;
-}
-
-.summary-card > div:nth-child(2) {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 10px;
-}
-
-.summary-card span {
-  color: #858897;
-  font-size: 11px;
-}
-
-.summary-card strong {
-  color: #2d3040;
-  font-size: 23px;
-  font-weight: 720;
-  letter-spacing: -0.04em;
-}
-
-.summary-card strong.folder-value {
-  overflow: hidden;
-  font-family: "SFMono-Regular", Consolas, monospace;
-  font-size: 13px;
-  font-weight: 650;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.summary-card small {
-  min-width: 0;
-  align-self: end;
-  overflow: hidden;
-  color: #b0b2bd;
-  cursor: default;
-  font-size: 9px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  flex-direction: column;
+  padding: 20px 30px 14px;
+  overflow-x: auto;
+  overflow-y: hidden;
 }
 
 .addons-panel {
+  display: flex;
+  min-height: 0;
+  flex: 1;
   min-width: 920px;
   overflow: hidden;
   border: 1px solid #e5e6ec;
-  border-radius: 14px;
+  border-radius: 16px;
   background: rgba(255, 255, 255, 0.94);
-  box-shadow: 0 6px 22px rgba(36, 39, 59, 0.035);
+  box-shadow: 0 8px 28px rgba(36, 39, 59, 0.045);
+}
+
+.addon-tabs {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
 }
 
 .addon-tabs > .n-tabs-nav {
+  flex: 0 0 auto;
   padding: 0 20px;
   border-bottom: 1px solid #ececf1;
 }
@@ -488,16 +406,26 @@ button {
   font-weight: 650;
 }
 
+.addon-tabs > .n-tabs-pane-wrapper {
+  min-height: 0;
+  flex: 1;
+  overflow: hidden;
+}
+
 .addon-tabs .n-tab-pane {
-  min-height: 350px;
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  flex-direction: column;
 }
 
 .panel-toolbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  min-height: 78px;
-  padding: 15px 19px;
+  flex: 0 0 auto;
+  min-height: 82px;
+  padding: 16px 22px;
   border-bottom: 1px solid #ececf1;
 }
 
@@ -512,6 +440,29 @@ button {
   margin: 3px 0 0;
   color: #a1a4b1;
   font-size: 10px;
+}
+
+.panel-heading {
+  min-width: 0;
+}
+
+.panel-title-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.addon-count-badge {
+  display: inline-grid;
+  min-width: 21px;
+  height: 20px;
+  place-items: center;
+  padding: 0 7px;
+  border-radius: 999px;
+  color: #5f6dde;
+  background: #eef0ff;
+  font-size: 10px;
+  font-weight: 700;
 }
 
 .toolbar-controls {
@@ -543,6 +494,7 @@ button {
 }
 
 .table-header {
+  flex: 0 0 auto;
   min-height: 37px;
   padding: 0 20px;
   border-bottom: 1px solid #eeeef2;
@@ -554,8 +506,8 @@ button {
 }
 
 .addon-list {
-  max-height: calc(100vh - 380px);
-  min-height: 272px;
+  min-height: 0;
+  flex: 1;
   overflow: auto;
 }
 
@@ -817,7 +769,9 @@ button {
 }
 
 .table-loading {
-  min-height: 272px;
+  min-height: 0;
+  flex: 1;
+  overflow: hidden;
 }
 
 .skeleton-row {
@@ -837,12 +791,14 @@ button {
 }
 
 .empty-state {
-  min-height: 300px;
+  min-height: 0;
+  flex: 1;
   justify-content: center;
 }
 
 .library-empty {
-  min-height: 390px;
+  min-height: 0;
+  flex: 1;
   justify-content: center;
 }
 
@@ -1283,20 +1239,7 @@ button {
 }
 
 @media (max-height: 720px) {
-  .summary-grid {
-    margin-bottom: 12px;
-  }
-
-  .summary-card {
-    padding-top: 12px;
-    padding-bottom: 11px;
-  }
-
   .panel-toolbar {
-    min-height: 66px;
-  }
-
-  .addon-list {
-    max-height: calc(100vh - 340px);
+    min-height: 70px;
   }
 }

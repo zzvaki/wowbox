@@ -38,7 +38,6 @@ import {
   Download,
   FolderOpen,
   FolderSearch,
-  HardDrive,
   Info,
   LoaderCircle,
   Puzzle,
@@ -186,8 +185,6 @@ const detailsRequests = ref<AddonRequestTrace[]>([]);
 const detailsRequestSequence = ref(0);
 const settings = ref<AppSettings>(cloneSettings(defaultSettings));
 const settingsDraft = ref<AppSettings>(cloneSettings(defaultSettings));
-const scanCompletedAt = ref<Date | null>(null);
-const checkedAt = ref<Date | null>(null);
 
 const activeInstallation = computed(() =>
   installations.value.find(
@@ -406,7 +403,6 @@ async function runScan(showNotice = true) {
       activeInstallation.value.flavor,
       locale.value,
     );
-    scanCompletedAt.value = new Date();
     if (showNotice) {
       message.success(t("addonsDetected", { count: addons.value.length }));
     }
@@ -455,7 +451,6 @@ async function runUpdateCheck() {
         error: result.error,
       };
     });
-    checkedAt.value = new Date();
     const available = results.filter((result) => result.status === "update").length;
     message.success(
       available ? t("updatesFound", { count: available }) : t("allUpToDate"),
@@ -778,14 +773,6 @@ function sourceLabel(source: AddonSource) {
   }[source];
 }
 
-function formatRelativeTime(date: Date | null) {
-  if (!date) return t("notPerformed");
-  return date.toLocaleTimeString(locale.value, {
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
-
 function formatNumber(value: number) {
   return new Intl.NumberFormat(locale.value, { notation: "compact" }).format(
     value,
@@ -949,45 +936,6 @@ watch(
           </header>
 
           <div class="content">
-            <section class="summary-grid">
-              <article class="summary-card primary-card">
-                <div class="summary-icon purple">
-                  <Puzzle :size="21" />
-                </div>
-                <div>
-                  <span>{{ t("installedAddons") }}</span>
-                  <strong>{{ addons.length }}</strong>
-                </div>
-                <small>{{ t("scannedAt", { time: formatRelativeTime(scanCompletedAt) }) }}</small>
-              </article>
-              <article class="summary-card">
-                <div class="summary-icon coral">
-                  <Download :size="21" />
-                </div>
-                <div>
-                  <span>{{ t("updatesAvailable") }}</span>
-                  <strong>{{ updateCount }}</strong>
-                </div>
-                <small>{{ checkedAt ? t("checkedAt", { time: formatRelativeTime(checkedAt) }) : t("waitingForCheck") }}</small>
-              </article>
-              <article class="summary-card">
-                <div class="summary-icon mint">
-                  <HardDrive :size="21" />
-                </div>
-                <div>
-                  <span>{{ t("currentDirectory") }}</span>
-                  <strong class="folder-value">{{ activeInstallation?.productFolder ?? "—" }}</strong>
-                </div>
-                <n-tooltip v-if="activeInstallation" trigger="hover">
-                  <template #trigger>
-                    <small class="path-text">{{ activeInstallation.addonsPath }}</small>
-                  </template>
-                  {{ activeInstallation.addonsPath }}
-                </n-tooltip>
-                <small v-else>{{ t("chooseGameDirectory") }}</small>
-              </article>
-            </section>
-
             <section class="addons-panel">
               <n-tabs
                 v-model:value="activeAddonTab"
@@ -997,8 +945,11 @@ watch(
               >
                 <n-tab-pane name="local" :tab="t('localAddons')">
                   <div class="panel-toolbar">
-                    <div>
-                      <h2>{{ t("myAddons") }}</h2>
+                    <div class="panel-heading">
+                      <div class="panel-title-line">
+                        <h2>{{ t("myAddons") }}</h2>
+                        <span class="addon-count-badge">{{ addons.length }}</span>
+                      </div>
                       <p>{{ t("manageAddons") }}</p>
                     </div>
                     <div class="toolbar-controls">
