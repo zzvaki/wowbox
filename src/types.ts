@@ -48,6 +48,7 @@ export interface AddonInfo {
   latestDownloadUrl?: string;
   websiteUrl?: string;
   remoteDetails?: AddonDetails;
+  remoteRequestTraces?: AddonRequestTrace[];
   error?: string;
   modifiedAt?: string;
 }
@@ -91,6 +92,22 @@ export interface AddonDetails {
   dateReleased?: string;
 }
 
+export interface AddonRequestTrace {
+  method: string;
+  url: string;
+  status: "success" | "error";
+  statusCode?: number;
+  durationMs: number;
+  content: string;
+  error?: string;
+}
+
+export interface AddonDetailsResponse {
+  details?: AddonDetails;
+  requests: AddonRequestTrace[];
+  error?: string;
+}
+
 export interface UpdateRequest {
   addon: AddonInfo;
   downloadUrl: string;
@@ -101,6 +118,12 @@ export interface UpdateResult {
   version: string;
   backupPath: string;
   installedFolders: string[];
+}
+
+export interface DeleteAddonResult {
+  addonId: string;
+  trashPath: string;
+  removedFolders: string[];
 }
 
 export interface AppSettings {

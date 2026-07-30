@@ -2,7 +2,9 @@ import { invoke } from "@tauri-apps/api/core";
 import { mockAddons, mockCheckUpdates, mockInstallations } from "@/data/mock";
 import type {
   AddonDetails,
+  AddonDetailsResponse,
   AddonInfo,
+  DeleteAddonResult,
   GameInstallation,
   UpdateCheckResult,
   UpdateRequest,
@@ -59,10 +61,10 @@ export async function fetchAddonDetails(
   addon: AddonInfo,
   flavor: string,
   userCurseforgeApiKey?: string,
-): Promise<AddonDetails> {
+): Promise<AddonDetailsResponse> {
   if (!inTauri()) {
     await delay(500);
-    return {
+    const details: AddonDetails = {
       projectId: addon.sourceId ?? "3358",
       name: addon.title,
       slug: addon.folderName.toLowerCase(),
@@ -76,8 +78,21 @@ export async function fetchAddonDetails(
       websiteUrl: addon.websiteUrl,
       dateModified: addon.modifiedAt,
     };
+    return {
+      details,
+      requests: [
+        {
+          method: "MOCK",
+          url: "browser://mock/curseforge-addon-details",
+          status: "success",
+          statusCode: 200,
+          durationMs: 500,
+          content: JSON.stringify({ data: details }, null, 2),
+        },
+      ],
+    };
   }
-  return invoke<AddonDetails>("fetch_addon_details", {
+  return invoke<AddonDetailsResponse>("fetch_addon_details", {
     addon,
     flavor,
     userCurseforgeApiKey: userCurseforgeApiKey || null,
@@ -97,6 +112,20 @@ export async function installAddonUpdate(
     };
   }
   return invoke<UpdateResult>("update_addon", { request });
+}
+
+export async function deleteInstalledAddon(
+  addon: AddonInfo,
+): Promise<DeleteAddonResult> {
+  if (!inTauri()) {
+    await delay(500);
+    return {
+      addonId: addon.id,
+      trashPath: `/mock/.wowbox-trash/${addon.folderName}`,
+      removedFolders: addon.folders,
+    };
+  }
+  return invoke<DeleteAddonResult>("delete_addon", { addon });
 }
 
 export async function chooseGameRoot(): Promise<string | null> {

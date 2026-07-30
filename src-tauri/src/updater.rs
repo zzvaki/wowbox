@@ -1,4 +1,4 @@
-use crate::models::{UpdateRequest, UpdateResult};
+use crate::models::{AddonInfo, DeleteAddonResult, UpdateRequest, UpdateResult};
 use chrono::Utc;
 use reqwest::Client;
 use std::{
@@ -21,7 +21,7 @@ pub async fn update_addon(
     if !addons_root.is_dir() {
         return Err(format!("插件根目录不存在：{}", addons_root.display()));
     }
-    validate_update_target(&request, &addons_root)?;
+    validate_addon_target(&request.addon, &addons_root)?;
     validate_download_url(&request.download_url)?;
 
     let client = Client::builder()
@@ -136,6 +136,66 @@ pub async fn update_addon(
     })
 }
 
+pub fn delete_addon(addon: AddonInfo, addons_root: PathBuf) -> Result<DeleteAddonResult, String> {
+    if !addons_root.is_dir() {
+        return Err(format!("插件根目录不存在：{}", addons_root.display()));
+    }
+    let addons_root =
+        fs::canonicalize(addons_root).map_err(|error| format!("无法确认插件根目录：{error}"))?;
+    validate_addon_target(&addon, &addons_root)?;
+
+    let trash_parent = addons_root.join(".wowbox-trash");
+    if let Ok(metadata) = fs::symlink_metadata(&trash_parent) {
+        if metadata.file_type().is_symlink() {
+            return Err("插件回收目录不能是符号链接。".into());
+        }
+    }
+    fs::create_dir_all(&trash_parent).map_err(|error| format!("无法创建插件回收目录：{error}"))?;
+    let canonical_trash_parent = fs::canonicalize(&trash_parent)
+        .map_err(|error| format!("无法确认插件回收目录：{error}"))?;
+    if canonical_trash_parent != trash_parent {
+        return Err("插件回收目录不在已授权的插件目录中。".into());
+    }
+
+    let trash_root = trash_parent.join(format!(
+        "{}-{}",
+        Utc::now().format("%Y%m%d-%H%M%S-%3f"),
+        safe_name(&addon.folder_name)
+    ));
+    fs::create_dir_all(&trash_root).map_err(|error| format!("无法创建插件回收目录：{error}"))?;
+
+    let mut folders: BTreeSet<String> = addon.folders.iter().cloned().collect();
+    folders.insert(addon.folder_name.clone());
+    let mut removed_folders = Vec::new();
+
+    for folder in folders {
+        if !is_safe_folder_name(&folder) {
+            rollback(&addons_root, &trash_root, &removed_folders);
+            return Err(format!("插件目录名不安全：{folder}"));
+        }
+        let source = addons_root.join(&folder);
+        if !source.exists() {
+            continue;
+        }
+        let destination = trash_root.join(&folder);
+        if let Err(error) = fs::rename(&source, &destination) {
+            rollback(&addons_root, &trash_root, &removed_folders);
+            return Err(format!("删除 {folder} 失败，已恢复插件：{error}"));
+        }
+        removed_folders.push(folder);
+    }
+
+    if removed_folders.is_empty() {
+        return Err("没有找到可删除的插件目录。".into());
+    }
+
+    Ok(DeleteAddonResult {
+        addon_id: addon.id,
+        trash_path: trash_root.to_string_lossy().into_owned(),
+        removed_folders,
+    })
+}
+
 fn extract_archive(bytes: &[u8], destination: &Path) -> Result<Vec<String>, String> {
     let reader = Cursor::new(bytes);
     let mut archive =
@@ -199,13 +259,10 @@ fn extract_archive(bytes: &[u8], destination: &Path) -> Result<Vec<String>, Stri
     Ok(valid_folders)
 }
 
-fn validate_update_target(request: &UpdateRequest, addons_root: &Path) -> Result<(), String> {
-    let mut folders = request.addon.folders.clone();
-    if !folders
-        .iter()
-        .any(|folder| folder == &request.addon.folder_name)
-    {
-        folders.push(request.addon.folder_name.clone());
+fn validate_addon_target(addon: &AddonInfo, addons_root: &Path) -> Result<(), String> {
+    let mut folders = addon.folders.clone();
+    if !folders.iter().any(|folder| folder == &addon.folder_name) {
+        folders.push(addon.folder_name.clone());
     }
     for folder in &folders {
         if !is_safe_folder_name(folder) {
@@ -213,10 +270,10 @@ fn validate_update_target(request: &UpdateRequest, addons_root: &Path) -> Result
         }
     }
 
-    let expected_path = std::fs::canonicalize(addons_root.join(&request.addon.folder_name))
+    let expected_path = std::fs::canonicalize(addons_root.join(&addon.folder_name))
         .map_err(|error| format!("无法确认插件路径：{error}"))?;
-    let provided_path = std::fs::canonicalize(&request.addon.path)
-        .map_err(|error| format!("无法确认插件路径：{error}"))?;
+    let provided_path =
+        std::fs::canonicalize(&addon.path).map_err(|error| format!("无法确认插件路径：{error}"))?;
     if expected_path != provided_path {
         return Err("插件路径与已扫描目录不一致，已取消更新。".into());
     }
@@ -289,4 +346,83 @@ fn safe_name(value: &str) -> String {
             }
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::delete_addon;
+    use crate::models::AddonInfo;
+    use std::fs;
+    #[cfg(unix)]
+    use std::os::unix::fs::symlink;
+    use tempfile::tempdir;
+
+    fn test_addon(path: &std::path::Path) -> AddonInfo {
+        AddonInfo {
+            id: "folder:ExampleAddon".into(),
+            title: "Example Addon".into(),
+            notes: String::new(),
+            author: String::new(),
+            version: "1.0".into(),
+            interface_version: "110200".into(),
+            source: "unknown".into(),
+            source_id: None,
+            folder_name: "ExampleAddon".into(),
+            folders: vec!["ExampleAddon".into(), "ExampleAddon_Config".into()],
+            path: path.to_string_lossy().into_owned(),
+            status: "untracked".into(),
+            latest_version: None,
+            latest_file_id: None,
+            latest_download_url: None,
+            website_url: None,
+            error: None,
+            modified_at: None,
+        }
+    }
+
+    #[test]
+    fn delete_moves_all_addon_folders_to_recoverable_trash() {
+        let root = tempdir().expect("temporary add-on root");
+        let primary = root.path().join("ExampleAddon");
+        let companion = root.path().join("ExampleAddon_Config");
+        fs::create_dir_all(&primary).expect("primary folder");
+        fs::create_dir_all(&companion).expect("companion folder");
+        fs::write(primary.join("ExampleAddon.toc"), "## Version: 1.0").expect("toc fixture");
+
+        let addon = test_addon(&primary);
+
+        let result = delete_addon(addon, root.path().to_path_buf()).expect("move to trash");
+
+        assert!(!primary.exists());
+        assert!(!companion.exists());
+        assert!(std::path::Path::new(&result.trash_path)
+            .join("ExampleAddon")
+            .is_dir());
+        assert!(std::path::Path::new(&result.trash_path)
+            .join("ExampleAddon_Config")
+            .is_dir());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn delete_rejects_symlinked_trash_directory() {
+        let root = tempdir().expect("temporary add-on root");
+        let external = tempdir().expect("external trash target");
+        let primary = root.path().join("ExampleAddon");
+        fs::create_dir_all(&primary).expect("primary folder");
+        fs::write(primary.join("ExampleAddon.toc"), "## Version: 1.0").expect("toc fixture");
+        symlink(external.path(), root.path().join(".wowbox-trash")).expect("trash symlink");
+
+        let error = delete_addon(test_addon(&primary), root.path().to_path_buf())
+            .expect_err("symlinked trash must be rejected");
+
+        assert!(error.contains("符号链接"));
+        assert!(primary.is_dir());
+        assert!(external
+            .path()
+            .read_dir()
+            .expect("external directory")
+            .next()
+            .is_none());
+    }
 }

@@ -1,11 +1,15 @@
 use crate::{
-    models::{AddonAuthor, AddonDetails, AddonInfo, UpdateCheckResult},
+    models::{
+        AddonAuthor, AddonDetails, AddonDetailsResponse, AddonInfo, AddonRequestTrace,
+        UpdateCheckResult,
+    },
     provider_config::curseforge_api_key,
     version::is_remote_newer,
 };
 use futures::{stream, StreamExt};
-use reqwest::Client;
-use serde::Deserialize;
+use reqwest::{Client, RequestBuilder};
+use serde::{de::DeserializeOwned, Deserialize};
+use std::time::Instant;
 
 const CURSEFORGE_API: &str = "https://api.curseforge.com/v1";
 const WOW_GAME_ID: u64 = 1;
@@ -173,6 +177,29 @@ pub async fn fetch_addon_details(
     addon: AddonInfo,
     flavor: String,
     user_curseforge_api_key: Option<String>,
+) -> AddonDetailsResponse {
+    let mut requests = Vec::new();
+    match fetch_addon_details_with_trace(addon, flavor, user_curseforge_api_key, &mut requests)
+        .await
+    {
+        Ok(details) => AddonDetailsResponse {
+            details: Some(details),
+            requests,
+            error: None,
+        },
+        Err(error) => AddonDetailsResponse {
+            details: None,
+            requests,
+            error: Some(error),
+        },
+    }
+}
+
+async fn fetch_addon_details_with_trace(
+    addon: AddonInfo,
+    flavor: String,
+    user_curseforge_api_key: Option<String>,
+    requests: &mut Vec<AddonRequestTrace>,
 ) -> Result<AddonDetails, String> {
     if addon.source == "wowinterface" {
         return Err("当前插件来自 WoWInterface，无法查询 CurseForge 详情。".into());
@@ -186,22 +213,216 @@ pub async fn fetch_addon_details(
     let needs_search = addon.source != "curseforge" || addon.source_id.is_none();
     let version_type_id = if needs_search {
         Some(
-            find_curseforge_version_type(&client, &api_key, &flavor)
+            find_curseforge_version_type_with_trace(&client, &api_key, &flavor, requests)
                 .await?
                 .ok_or_else(|| "未找到与当前客户端匹配的 CurseForge 游戏版本。".to_string())?,
         )
     } else {
         None
     };
-    let project = resolve_curse_project(&client, &addon, &api_key, version_type_id)
-        .await?
-        .ok_or_else(|| "未能在 CurseForge 中准确匹配这个插件。".to_string())?;
+    let project =
+        resolve_curse_project_with_trace(&client, &addon, &api_key, version_type_id, requests)
+            .await?
+            .ok_or_else(|| "未能在 CurseForge 中准确匹配这个插件。".to_string())?;
     // Description is supplemental. Keep the structured project details usable
     // when CurseForge omits or temporarily fails this separate endpoint.
-    let description = fetch_project_description(&client, &api_key, project.id)
+    let description = fetch_project_description_with_trace(&client, &api_key, project.id, requests)
         .await
         .unwrap_or_default();
     Ok(addon_details(project, description))
+}
+
+async fn find_curseforge_version_type_with_trace(
+    client: &Client,
+    api_key: &str,
+    flavor: &str,
+    requests: &mut Vec<AddonRequestTrace>,
+) -> Result<Option<u64>, String> {
+    let response = send_json_with_trace::<ApiResponse<Vec<GameVersionType>>>(
+        client,
+        client
+            .get(format!(
+                "{CURSEFORGE_API}/games/{WOW_GAME_ID}/version-types"
+            ))
+            .header("x-api-key", api_key),
+        requests,
+    )
+    .await?;
+    let wanted = flavor_tokens(flavor);
+    Ok(response
+        .data
+        .into_iter()
+        .find(|item| matches_curseforge_flavor(item, flavor, &wanted))
+        .map(|item| item.id))
+}
+
+async fn resolve_curse_project_with_trace(
+    client: &Client,
+    addon: &AddonInfo,
+    api_key: &str,
+    version_type_id: Option<u64>,
+    requests: &mut Vec<AddonRequestTrace>,
+) -> Result<Option<CurseProject>, String> {
+    if let Some(project_id) = addon
+        .source_id
+        .as_deref()
+        .filter(|_| addon.source == "curseforge")
+    {
+        let project_id = project_id
+            .parse::<u64>()
+            .map_err(|_| "CurseForge Project ID 格式无效。".to_string())?;
+        let response = send_json_with_trace::<ApiResponse<CurseProject>>(
+            client,
+            client
+                .get(format!("{CURSEFORGE_API}/mods/{project_id}"))
+                .header("x-api-key", api_key),
+            requests,
+        )
+        .await?;
+        return Ok(Some(response.data));
+    }
+
+    let version_type_id =
+        version_type_id.ok_or_else(|| "搜索插件时缺少 CurseForge 游戏版本。".to_string())?;
+    search_curse_project_with_trace(client, addon, api_key, version_type_id, requests).await
+}
+
+async fn search_curse_project_with_trace(
+    client: &Client,
+    addon: &AddonInfo,
+    api_key: &str,
+    version_type_id: u64,
+    requests: &mut Vec<AddonRequestTrace>,
+) -> Result<Option<CurseProject>, String> {
+    let mut search_terms = vec![addon.folder_name.trim(), addon.title.trim()];
+    search_terms.dedup();
+    let mut candidates = Vec::new();
+
+    for search_term in search_terms.into_iter().filter(|term| !term.is_empty()) {
+        let response = send_json_with_trace::<SearchModsResponse>(
+            client,
+            client
+                .get(format!("{CURSEFORGE_API}/mods/search"))
+                .header("x-api-key", api_key)
+                .query(&[
+                    ("gameId", WOW_GAME_ID.to_string()),
+                    ("gameVersionTypeId", version_type_id.to_string()),
+                    ("searchFilter", search_term.to_string()),
+                    ("sortField", "2".to_string()),
+                    ("sortOrder", "desc".to_string()),
+                    ("pageSize", "10".to_string()),
+                ]),
+            requests,
+        )
+        .await?;
+        candidates.extend(response.data);
+    }
+
+    Ok(select_curse_project(addon, candidates))
+}
+
+async fn fetch_project_description_with_trace(
+    client: &Client,
+    api_key: &str,
+    project_id: u64,
+    requests: &mut Vec<AddonRequestTrace>,
+) -> Result<String, String> {
+    send_json_with_trace::<ApiResponse<String>>(
+        client,
+        client
+            .get(format!("{CURSEFORGE_API}/mods/{project_id}/description"))
+            .header("x-api-key", api_key)
+            .query(&[("stripped", true)]),
+        requests,
+    )
+    .await
+    .map(|response| response.data)
+}
+
+async fn send_json_with_trace<T: DeserializeOwned>(
+    client: &Client,
+    request: RequestBuilder,
+    requests: &mut Vec<AddonRequestTrace>,
+) -> Result<T, String> {
+    let request = request
+        .build()
+        .map_err(|error| format!("无法构建 CurseForge 请求：{error}"))?;
+    let method = request.method().to_string();
+    let url = request.url().to_string();
+    let started_at = Instant::now();
+    let response = match client.execute(request).await {
+        Ok(response) => response,
+        Err(error) => {
+            let message = format!("连接 CurseForge 失败：{error}");
+            requests.push(AddonRequestTrace {
+                method,
+                url,
+                status: "error".into(),
+                status_code: None,
+                duration_ms: started_at.elapsed().as_millis() as u64,
+                content: String::new(),
+                error: Some(message.clone()),
+            });
+            return Err(message);
+        }
+    };
+    let status = response.status();
+    let content = match response.text().await {
+        Ok(content) => content,
+        Err(error) => {
+            let message = format!("读取 CurseForge 响应失败：{error}");
+            requests.push(AddonRequestTrace {
+                method,
+                url,
+                status: "error".into(),
+                status_code: Some(status.as_u16()),
+                duration_ms: started_at.elapsed().as_millis() as u64,
+                content: String::new(),
+                error: Some(message.clone()),
+            });
+            return Err(message);
+        }
+    };
+    if !status.is_success() {
+        let message = format!("CurseForge 请求失败：HTTP {}", status.as_u16());
+        requests.push(AddonRequestTrace {
+            method,
+            url,
+            status: "error".into(),
+            status_code: Some(status.as_u16()),
+            duration_ms: started_at.elapsed().as_millis() as u64,
+            content,
+            error: Some(message.clone()),
+        });
+        return Err(message);
+    }
+    match serde_json::from_str::<T>(&content) {
+        Ok(payload) => {
+            requests.push(AddonRequestTrace {
+                method,
+                url,
+                status: "success".into(),
+                status_code: Some(status.as_u16()),
+                duration_ms: started_at.elapsed().as_millis() as u64,
+                content,
+                error: None,
+            });
+            Ok(payload)
+        }
+        Err(error) => {
+            let message = format!("无法解析 CurseForge 响应：{error}");
+            requests.push(AddonRequestTrace {
+                method,
+                url,
+                status: "error".into(),
+                status_code: Some(status.as_u16()),
+                duration_ms: started_at.elapsed().as_millis() as u64,
+                content,
+                error: Some(message.clone()),
+            });
+            Err(message)
+        }
+    }
 }
 
 async fn resolve_curse_project(
@@ -279,6 +500,13 @@ async fn search_curse_project(
         candidates.extend(response.data);
     }
 
+    Ok(select_curse_project(addon, candidates))
+}
+
+fn select_curse_project(
+    addon: &AddonInfo,
+    mut candidates: Vec<CurseProject>,
+) -> Option<CurseProject> {
     candidates.sort_by_key(|project| project.id);
     candidates.dedup_by_key(|project| project.id);
     let matches = candidates
@@ -288,39 +516,15 @@ async fn search_curse_project(
             (score > 0).then_some((score, project))
         })
         .collect::<Vec<_>>();
-    let Some(best_score) = matches.iter().map(|(score, _)| *score).max() else {
-        return Ok(None);
-    };
+    let best_score = matches.iter().map(|(score, _)| *score).max()?;
     let mut best_matches = matches
         .into_iter()
         .filter(|(score, _)| *score == best_score);
-    let Some((_, project)) = best_matches.next() else {
-        return Ok(None);
-    };
+    let (_, project) = best_matches.next()?;
     if best_matches.next().is_some() {
-        return Ok(None);
+        return None;
     }
-    Ok(Some(project))
-}
-
-async fn fetch_project_description(
-    client: &Client,
-    api_key: &str,
-    project_id: u64,
-) -> Result<String, String> {
-    client
-        .get(format!("{CURSEFORGE_API}/mods/{project_id}/description"))
-        .header("x-api-key", api_key)
-        .query(&[("stripped", true)])
-        .send()
-        .await
-        .map_err(|error| format!("连接 CurseForge 插件描述接口失败：{error}"))?
-        .error_for_status()
-        .map_err(|error| format!("CurseForge 插件描述请求失败：{error}"))?
-        .json::<ApiResponse<String>>()
-        .await
-        .map(|payload| payload.data)
-        .map_err(|error| format!("CurseForge 插件描述无法解析：{error}"))
+    Some(project)
 }
 
 fn project_match_score(addon: &AddonInfo, project: &CurseProject) -> u8 {

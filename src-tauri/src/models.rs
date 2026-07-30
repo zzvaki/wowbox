@@ -117,6 +117,26 @@ pub struct AddonDetails {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct AddonRequestTrace {
+    pub method: String,
+    pub url: String,
+    pub status: String,
+    pub status_code: Option<u16>,
+    pub duration_ms: u64,
+    pub content: String,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AddonDetailsResponse {
+    pub details: Option<AddonDetails>,
+    pub requests: Vec<AddonRequestTrace>,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct UpdateRequest {
     pub addon: AddonInfo,
     pub download_url: String,
@@ -129,4 +149,12 @@ pub struct UpdateResult {
     pub version: String,
     pub backup_path: String,
     pub installed_folders: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteAddonResult {
+    pub addon_id: String,
+    pub trash_path: String,
+    pub removed_folders: Vec<String>,
 }

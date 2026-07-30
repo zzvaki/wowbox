@@ -6,9 +6,15 @@ mod updater;
 mod version;
 
 use models::{
-    AddonDetails, AddonInfo, GameInstallation, UpdateCheckResult, UpdateRequest, UpdateResult,
+    AddonDetailsResponse, AddonInfo, DeleteAddonResult, GameInstallation, UpdateCheckResult,
+    UpdateRequest, UpdateResult,
 };
-use std::{collections::HashSet, fs, path::PathBuf, sync::Mutex};
+use std::{
+    collections::HashSet,
+    fs,
+    path::{Path, PathBuf},
+    sync::Mutex,
+};
 use tauri::{Manager, State};
 use tauri_plugin_dialog::DialogExt;
 
@@ -18,7 +24,30 @@ const AUTHORIZED_GAME_ROOTS_FILE: &str = "authorized-game-roots.json";
 struct ManagedAddonRoots(Mutex<HashSet<PathBuf>>);
 
 #[derive(Default)]
+struct ManagedAddonOperations(Mutex<HashSet<PathBuf>>);
+
+#[derive(Default)]
 struct AuthorizedGameRoots(Mutex<HashSet<PathBuf>>);
+
+fn begin_addon_operation(
+    operations: &ManagedAddonOperations,
+    addons_root: &Path,
+) -> Result<(), String> {
+    let mut active = operations
+        .0
+        .lock()
+        .map_err(|_| "插件操作状态不可用。".to_string())?;
+    if !active.insert(addons_root.to_path_buf()) {
+        return Err("该插件目录正在执行其他操作，请稍后再试。".into());
+    }
+    Ok(())
+}
+
+fn finish_addon_operation(operations: &ManagedAddonOperations, addons_root: &Path) {
+    if let Ok(mut active) = operations.0.lock() {
+        active.remove(addons_root);
+    }
+}
 
 fn load_authorized_game_roots(app: &tauri::AppHandle) -> HashSet<PathBuf> {
     let Ok(config_directory) = app.path().app_config_dir() else {
@@ -198,7 +227,7 @@ async fn fetch_addon_details(
     addon: AddonInfo,
     flavor: String,
     user_curseforge_api_key: Option<String>,
-) -> Result<AddonDetails, String> {
+) -> AddonDetailsResponse {
     providers::fetch_addon_details(addon, flavor, user_curseforge_api_key).await
 }
 
@@ -206,6 +235,7 @@ async fn fetch_addon_details(
 async fn update_addon(
     request: UpdateRequest,
     managed_roots: State<'_, ManagedAddonRoots>,
+    operations: State<'_, ManagedAddonOperations>,
 ) -> Result<UpdateResult, String> {
     let addons_root = std::path::Path::new(&request.addon.path)
         .parent()
@@ -220,13 +250,42 @@ async fn update_addon(
     if !is_managed {
         return Err("插件目录尚未由本次会话扫描，请先重新扫描后再更新。".into());
     }
-    updater::update_addon(request, addons_root).await
+    begin_addon_operation(&operations, &addons_root)?;
+    let result = updater::update_addon(request, addons_root.clone()).await;
+    finish_addon_operation(&operations, &addons_root);
+    result
+}
+
+#[tauri::command]
+fn delete_addon(
+    addon: AddonInfo,
+    managed_roots: State<'_, ManagedAddonRoots>,
+    operations: State<'_, ManagedAddonOperations>,
+) -> Result<DeleteAddonResult, String> {
+    let addons_root = std::path::Path::new(&addon.path)
+        .parent()
+        .ok_or_else(|| "无法确定插件根目录。".to_string())?;
+    let addons_root = std::fs::canonicalize(addons_root)
+        .map_err(|error| format!("无法确认插件根目录：{error}"))?;
+    let is_managed = managed_roots
+        .0
+        .lock()
+        .map_err(|_| "插件目录状态不可用。".to_string())?
+        .contains(&addons_root);
+    if !is_managed {
+        return Err("插件目录尚未由本次会话扫描，请先重新扫描后再删除。".into());
+    }
+    begin_addon_operation(&operations, &addons_root)?;
+    let result = updater::delete_addon(addon, addons_root.clone());
+    finish_addon_operation(&operations, &addons_root);
+    result
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .manage(ManagedAddonRoots::default())
+        .manage(ManagedAddonOperations::default())
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let authorized_roots = load_authorized_game_roots(app.handle());
@@ -240,7 +299,8 @@ pub fn run() {
             scan_addons,
             check_updates,
             fetch_addon_details,
-            update_addon
+            update_addon,
+            delete_addon
         ])
         .run(tauri::generate_context!())
         .expect("error while running WowBox");

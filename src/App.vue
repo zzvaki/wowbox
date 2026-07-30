@@ -11,6 +11,7 @@ import {
   NCollapse,
   NCollapseItem,
   NConfigProvider,
+  NDropdown,
   NEmpty,
   NFormItem,
   NInput,
@@ -19,7 +20,9 @@ import {
   NSelect,
   NSkeleton,
   NSwitch,
+  NTabPane,
   NTag,
+  NTabs,
   NTooltip,
   createDiscreteApi,
   type GlobalThemeOverrides,
@@ -50,6 +53,7 @@ import {
 import {
   checkAddonUpdates,
   chooseGameRoot,
+  deleteInstalledAddon,
   detectInstallations,
   fetchAddonDetails,
   installAddonUpdate,
@@ -65,6 +69,7 @@ import {
 } from "@/i18n";
 import type {
   AddonInfo,
+  AddonRequestTrace,
   AddonSource,
   AddonStatus,
   AppLocale,
@@ -93,7 +98,7 @@ const themeOverrides: GlobalThemeOverrides = {
   },
 };
 
-const { message } = createDiscreteApi(["message"], {
+const { message, dialog } = createDiscreteApi(["message", "dialog"], {
   configProviderProps: {
     theme: undefined,
     themeOverrides,
@@ -168,16 +173,28 @@ const activeInstallationId = ref("");
 const addons = ref<AddonInfo[]>([]);
 const searchTerm = ref("");
 const statusFilter = ref<"all" | "update" | "current" | "untracked">("all");
+const activeAddonTab = ref<"local" | "library">("local");
 const loadingInstallations = ref(true);
 const scanning = ref(false);
 const checking = ref(false);
 const updatingAll = ref(false);
+const busyAddonIds = ref<Record<string, true>>({});
 const settingsVisible = ref(false);
 const expandedSettings = ref<string[]>([]);
 const detailsVisible = ref(false);
 const selectedAddon = ref<AddonInfo | null>(null);
 const detailsLoading = ref(false);
 const detailsError = ref("");
+type DetailsRequestStatus =
+  | "idle"
+  | "loading"
+  | "success"
+  | "partial"
+  | "error";
+const detailsRequestStatus = ref<DetailsRequestStatus>("idle");
+const detailsRequestTarget = ref("");
+const detailsRequests = ref<AddonRequestTrace[]>([]);
+const detailsRequestSequence = ref(0);
 const apiKeyVisible = ref(false);
 const settings = ref<AppSettings>(cloneSettings(defaultSettings));
 const settingsDraft = ref<AppSettings>(cloneSettings(defaultSettings));
@@ -193,6 +210,20 @@ const activeInstallation = computed(() =>
 const updateCount = computed(
   () => addons.value.filter((addon) => addon.status === "update").length,
 );
+
+const hasActiveOperations = computed(
+  () => Object.keys(busyAddonIds.value).length > 0,
+);
+
+function setAddonBusy(addonId: string, busy: boolean) {
+  const next = { ...busyAddonIds.value };
+  if (busy) {
+    next[addonId] = true;
+  } else {
+    delete next[addonId];
+  }
+  busyAddonIds.value = next;
+}
 
 const currentCount = computed(
   () => addons.value.filter((addon) => addon.status === "current").length,
@@ -255,6 +286,10 @@ function configuredGamePaths(value: AppSettings) {
 }
 
 function openSettings() {
+  if (hasActiveOperations.value) {
+    message.warning(t("operationInProgress"));
+    return;
+  }
   settingsDraft.value = cloneSettings(settings.value);
   expandedSettings.value = [];
   apiKeyVisible.value = false;
@@ -272,6 +307,10 @@ function persistSettings(value: AppSettings) {
 }
 
 async function saveSettings() {
+  if (hasActiveOperations.value) {
+    message.warning(t("operationInProgress"));
+    return;
+  }
   const nextSettings = cloneSettings(settingsDraft.value);
   try {
     await syncAuthorizedGameRoots(configuredGamePaths(nextSettings));
@@ -361,7 +400,7 @@ async function refreshInstallations() {
 }
 
 async function selectInstallation(id: string) {
-  if (id === activeInstallationId.value) return;
+  if (id === activeInstallationId.value || hasActiveOperations.value) return;
   activeInstallationId.value = id;
   searchTerm.value = "";
   statusFilter.value = "all";
@@ -369,7 +408,13 @@ async function selectInstallation(id: string) {
 }
 
 async function runScan(showNotice = true) {
-  if (!activeInstallation.value || scanning.value) return;
+  if (
+    !activeInstallation.value ||
+    scanning.value ||
+    hasActiveOperations.value
+  ) {
+    return;
+  }
   scanning.value = true;
   try {
     addons.value = await scanAddons(
@@ -389,7 +434,14 @@ async function runScan(showNotice = true) {
 }
 
 async function runUpdateCheck() {
-  if (!activeInstallation.value || !addons.value.length || checking.value) return;
+  if (
+    !activeInstallation.value ||
+    !addons.value.length ||
+    checking.value ||
+    hasActiveOperations.value
+  ) {
+    return;
+  }
   if (settings.value.pluginDataSource !== "curseforge") {
     message.info(t("wowInterfacePending"));
     return;
@@ -441,11 +493,20 @@ async function runUpdateCheck() {
   }
 }
 
-async function updateOne(addon: AddonInfo, quiet = false) {
+async function updateOne(
+  addon: AddonInfo,
+  quiet = false,
+  operationAlreadyLocked = false,
+) {
+  if (!operationAlreadyLocked && hasActiveOperations.value) {
+    message.warning(t("operationInProgress"));
+    return false;
+  }
   if (!addon.latestDownloadUrl) {
     message.warning(t("noDownload"));
     return false;
   }
+  if (!operationAlreadyLocked) setAddonBusy(addon.id, true);
   const previousStatus = addon.status;
   addon.status = "updating";
   try {
@@ -462,18 +523,116 @@ async function updateOne(addon: AddonInfo, quiet = false) {
     addon.error = errorMessage(error, t("updateFailed"));
     if (!quiet) message.error(t("addonUpdateFailed", { title: addon.title }));
     return false;
+  } finally {
+    if (!operationAlreadyLocked) setAddonBusy(addon.id, false);
+  }
+}
+
+async function reinstallOne(addon: AddonInfo) {
+  if (!addon.latestDownloadUrl) {
+    message.warning(t("reinstallUnavailable"));
+    return;
+  }
+  const succeeded = await updateOne(addon, true);
+  if (succeeded) {
+    message.success(t("addonReinstalled", { title: addon.title }));
+  } else if (!hasActiveOperations.value) {
+    message.error(t("addonReinstallFailed", { title: addon.title }));
+  }
+}
+
+function confirmReinstall(addon: AddonInfo) {
+  dialog.warning({
+    title: t("confirmReinstallTitle"),
+    content: t("confirmReinstallContent", { title: addon.title }),
+    positiveText: t("confirm"),
+    negativeText: t("cancel"),
+    onPositiveClick: () => reinstallOne(addon),
+  });
+}
+
+async function deleteOne(addon: AddonInfo) {
+  if (hasActiveOperations.value) {
+    message.warning(t("operationInProgress"));
+    return;
+  }
+  setAddonBusy(addon.id, true);
+  try {
+    const result = await deleteInstalledAddon(addon);
+    addons.value = addons.value.filter((item) => item.id !== addon.id);
+    if (activeInstallation.value) {
+      activeInstallation.value.addonCount = Math.max(
+        0,
+        activeInstallation.value.addonCount - 1,
+      );
+    }
+    message.success(
+      t("addonDeleted", {
+        title: addon.title,
+        path: result.trashPath,
+      }),
+    );
+  } catch (error) {
+    message.error(errorMessage(error, t("deleteAddonFailed")));
+  } finally {
+    setAddonBusy(addon.id, false);
+  }
+}
+
+function confirmDelete(addon: AddonInfo) {
+  dialog.error({
+    title: t("confirmDeleteTitle"),
+    content: t("confirmDeleteContent", { title: addon.title }),
+    positiveText: t("deleteAddon"),
+    negativeText: t("cancel"),
+    onPositiveClick: () => deleteOne(addon),
+  });
+}
+
+function addonSettingsOptions(addon: AddonInfo) {
+  return [
+    {
+      label: t("reinstall"),
+      key: "reinstall",
+      disabled:
+        hasActiveOperations.value ||
+        addon.status === "updating" ||
+        !addon.latestDownloadUrl,
+    },
+    {
+      type: "divider" as const,
+      key: "divider",
+    },
+    {
+      label: t("deleteAddon"),
+      key: "delete",
+      disabled: hasActiveOperations.value || addon.status === "updating",
+    },
+  ];
+}
+
+function handleAddonSetting(action: string, addon: AddonInfo) {
+  if (action === "reinstall") {
+    confirmReinstall(addon);
+  } else if (action === "delete") {
+    confirmDelete(addon);
   }
 }
 
 async function updateAll() {
   const pending = addons.value.filter((addon) => addon.status === "update");
-  if (!pending.length || updatingAll.value) return;
+  if (!pending.length || updatingAll.value || hasActiveOperations.value) return;
   updatingAll.value = true;
+  pending.forEach((addon) => setAddonBusy(addon.id, true));
   let succeeded = 0;
-  for (const addon of pending) {
-    if (await updateOne(addon, true)) succeeded += 1;
+  try {
+    for (const addon of pending) {
+      if (await updateOne(addon, true, true)) succeeded += 1;
+    }
+  } finally {
+    pending.forEach((addon) => setAddonBusy(addon.id, false));
+    updatingAll.value = false;
   }
-  updatingAll.value = false;
   if (succeeded === pending.length) {
     message.success(t("allUpdated", { count: succeeded }));
   } else {
@@ -509,13 +668,30 @@ function clearClientPath(flavor: GameFlavor) {
   delete settingsDraft.value.clientPaths[flavor];
 }
 
-async function showDetails(addon: AddonInfo) {
-  selectedAddon.value = addon;
-  detailsLoading.value = false;
-  detailsError.value = "";
-  detailsVisible.value = true;
+function buildDetailsRequestTarget(addon: AddonInfo) {
+  if (addon.source === "curseforge" && addon.sourceId) {
+    return `/v1/mods/${addon.sourceId} → /description`;
+  }
+  return "/v1/games/1/version-types → /v1/mods/search?gameId=1 → /description";
+}
+
+function requestStatusFromTraces(
+  requests: AddonRequestTrace[],
+  hasError = false,
+): DetailsRequestStatus {
+  if (hasError) {
+    return requests.some((request) => request.status === "success")
+      ? "partial"
+      : "error";
+  }
+  if (requests.some((request) => request.status === "error")) {
+    return "partial";
+  }
+  return requests.length ? "success" : "idle";
+}
+
+async function loadAddonDetails(addon: AddonInfo) {
   if (
-    addon.remoteDetails ||
     addon.source === "wowinterface" ||
     settings.value.pluginDataSource !== "curseforge" ||
     !activeInstallation.value
@@ -524,36 +700,86 @@ async function showDetails(addon: AddonInfo) {
   }
 
   const requestedAddonId = addon.id;
+  const requestSequence = ++detailsRequestSequence.value;
   detailsLoading.value = true;
+  detailsError.value = "";
+  detailsRequestStatus.value = "loading";
+  detailsRequestTarget.value = buildDetailsRequestTarget(addon);
+  detailsRequests.value = [];
   try {
-    const details = await fetchAddonDetails(
+    const response = await fetchAddonDetails(
       addon,
       activeInstallation.value.flavor,
       settings.value.curseforgeApiKey,
     );
-    Object.assign(addon, {
-      title: details.name || addon.title,
-      notes: details.summary || addon.notes,
-      author:
-        details.authors.map((author) => author.name).filter(Boolean).join(", ") ||
-        addon.author,
-      source: "curseforge" as const,
-      sourceId: details.projectId,
-      websiteUrl: details.websiteUrl || addon.websiteUrl,
-      remoteDetails: details,
-    });
-    if (selectedAddon.value?.id === requestedAddonId) {
+    if (
+      requestSequence === detailsRequestSequence.value &&
+      selectedAddon.value?.id === requestedAddonId
+    ) {
+      detailsRequests.value = response.requests;
+      addon.remoteRequestTraces = response.requests;
+      if (response.error || !response.details) {
+        detailsError.value =
+          response.error || t("detailsLoadFailed");
+        detailsRequestStatus.value = requestStatusFromTraces(
+          response.requests,
+          true,
+        );
+        return;
+      }
+      const details = response.details;
+      Object.assign(addon, {
+        title: details.name || addon.title,
+        notes: details.summary || addon.notes,
+        author:
+          details.authors
+            .map((author) => author.name)
+            .filter(Boolean)
+            .join(", ") || addon.author,
+        source: "curseforge" as const,
+        sourceId: details.projectId,
+        websiteUrl: details.websiteUrl || addon.websiteUrl,
+        remoteDetails: details,
+        remoteRequestTraces: response.requests,
+      });
       selectedAddon.value = addon;
+      detailsRequestStatus.value = requestStatusFromTraces(response.requests);
     }
   } catch (error) {
-    if (selectedAddon.value?.id === requestedAddonId) {
+    if (
+      requestSequence === detailsRequestSequence.value &&
+      selectedAddon.value?.id === requestedAddonId
+    ) {
       detailsError.value = errorMessage(error, t("detailsLoadFailed"));
+      detailsRequestStatus.value = "error";
     }
   } finally {
-    if (selectedAddon.value?.id === requestedAddonId) {
+    if (
+      requestSequence === detailsRequestSequence.value &&
+      selectedAddon.value?.id === requestedAddonId
+    ) {
       detailsLoading.value = false;
     }
   }
+}
+
+async function showDetails(addon: AddonInfo) {
+  ++detailsRequestSequence.value;
+  selectedAddon.value = addon;
+  detailsLoading.value = false;
+  detailsError.value = "";
+  detailsRequestTarget.value = buildDetailsRequestTarget(addon);
+  detailsRequests.value = addon.remoteRequestTraces ?? [];
+  detailsRequestStatus.value = requestStatusFromTraces(detailsRequests.value);
+  detailsVisible.value = true;
+  if (!addon.remoteDetails) {
+    await loadAddonDetails(addon);
+  }
+}
+
+async function refreshDetails() {
+  if (!selectedAddon.value || detailsLoading.value) return;
+  await loadAddonDetails(selectedAddon.value);
 }
 
 function statusLabel(status: AddonStatus) {
@@ -573,14 +799,6 @@ function sourceLabel(source: AddonSource) {
     curseforge: "CurseForge",
     wowinterface: t("sourceWowInterface"),
     unknown: t("sourceLocal"),
-  }[source];
-}
-
-function sourceMark(source: AddonSource) {
-  return {
-    curseforge: "CF",
-    wowinterface: "WI",
-    unknown: "L",
   }[source];
 }
 
@@ -667,6 +885,7 @@ watch(
               :key="installation.id"
               class="installation-item"
               :class="{ active: installation.id === activeInstallationId }"
+              :disabled="hasActiveOperations"
               type="button"
               @click="selectInstallation(installation.id)"
             >
@@ -684,14 +903,23 @@ watch(
           <div v-if="!loadingInstallations && !installations.length" class="no-game">
             <FolderSearch :size="22" />
             <span>{{ t("noGameClient") }}</span>
-            <button type="button" @click="openSettings">
+            <button
+              type="button"
+              :disabled="hasActiveOperations"
+              @click="openSettings"
+            >
               {{ t("manualSelect") }}
             </button>
           </div>
 
           <div class="sidebar-spacer" />
 
-          <button class="sidebar-settings" type="button" @click="openSettings">
+          <button
+            class="sidebar-settings"
+            type="button"
+            :disabled="hasActiveOperations"
+            @click="openSettings"
+          >
             <Settings2 :size="18" />
             <span>{{ t("settings") }}</span>
           </button>
@@ -713,7 +941,7 @@ watch(
                     quaternary
                     circle
                     :loading="scanning"
-                    :disabled="!activeInstallation"
+                    :disabled="!activeInstallation || hasActiveOperations"
                     :aria-label="t('rescan')"
                     @click="runScan()"
                   >
@@ -725,7 +953,7 @@ watch(
               <n-button
                 secondary
                 :loading="checking"
-                :disabled="!addons.length"
+                :disabled="!addons.length || hasActiveOperations"
                 @click="runUpdateCheck"
               >
                 <template #icon><Sparkles :size="17" /></template>
@@ -734,7 +962,7 @@ watch(
               <n-button
                 type="primary"
                 :loading="updatingAll"
-                :disabled="!updateCount"
+                :disabled="!updateCount || hasActiveOperations"
                 @click="updateAll"
               >
                 <template #icon><Download :size="17" /></template>
@@ -785,143 +1013,227 @@ watch(
             </section>
 
             <section class="addons-panel">
-              <div class="panel-toolbar">
-                <div>
-                  <h2>{{ t("myAddons") }}</h2>
-                  <p>{{ t("manageAddons") }}</p>
-                </div>
-                <div class="toolbar-controls">
-                  <n-input
-                    v-model:value="searchTerm"
-                    clearable
-                    :placeholder="t('searchAddons')"
-                    class="search-input"
-                  >
-                    <template #prefix><Search :size="17" /></template>
-                  </n-input>
-                  <n-select
-                    v-model:value="statusFilter"
-                    :options="filterOptions"
-                    class="filter-select"
-                    :consistent-menu-width="false"
-                  />
-                </div>
-              </div>
-
-              <div class="table-header">
-                <span>{{ t("addon") }}</span>
-                <span>{{ t("source") }}</span>
-                <span>{{ t("localVersion") }}</span>
-                <span>{{ t("status") }}</span>
-                <span />
-              </div>
-
-              <div v-if="scanning" class="table-loading">
-                <div v-for="item in 5" :key="item" class="skeleton-row">
-                  <n-skeleton height="42px" width="42px" round />
-                  <div>
-                    <n-skeleton text width="42%" />
-                    <n-skeleton text width="70%" />
-                  </div>
-                  <n-skeleton text width="66px" />
-                  <n-skeleton text width="72px" />
-                  <n-skeleton text width="78px" />
-                </div>
-              </div>
-
-              <div v-else-if="visibleAddons.length" class="addon-list">
-                <article
-                  v-for="addon in visibleAddons"
-                  :key="addon.id"
-                  class="addon-row"
-                  :class="{ 'has-update': addon.status === 'update' }"
-                  @dblclick="showDetails(addon)"
-                >
-                  <div class="addon-main">
-                    <div class="addon-avatar" :data-source="addon.source">
-                      {{ addon.title.slice(0, 1).toUpperCase() }}
-                    </div>
-                    <div class="addon-copy">
-                      <div class="addon-title-line">
-                        <strong>{{ addon.title }}</strong>
-                        <n-tag
-                          v-if="addon.interfaceVersion"
-                          size="tiny"
-                          :bordered="false"
-                          class="interface-tag"
-                        >
-                          {{ addon.interfaceVersion }}
-                        </n-tag>
-                      </div>
-                      <p>{{ addon.notes || t("createdBy", { author: displayValue(addon.author, "unknownAuthor") }) }}</p>
-                    </div>
-                  </div>
-
-                  <div class="source-cell">
-                    <span class="source-mark" :data-source="addon.source">
-                      {{ sourceMark(addon.source) }}
-                    </span>
-                    <span>{{ sourceLabel(addon.source) }}</span>
-                  </div>
-
-                  <div class="version-cell">
-                    <span>{{ displayValue(addon.version, "unknown") }}</span>
-                    <small v-if="addon.status === 'update'">
-                      → {{ addon.latestVersion }}
-                    </small>
-                  </div>
-
-                  <div class="status-cell" :data-status="addon.status">
-                    <LoaderCircle
-                      v-if="addon.status === 'checking' || addon.status === 'updating'"
-                      class="spin"
-                      :size="15"
-                    />
-                    <CheckCircle2 v-else-if="addon.status === 'current'" :size="15" />
-                    <Download v-else-if="addon.status === 'update'" :size="15" />
-                    <CircleHelp v-else-if="addon.status === 'untracked'" :size="15" />
-                    <AlertCircle v-else :size="15" />
-                    <span>{{ statusLabel(addon.status) }}</span>
-                  </div>
-
-                  <div class="row-actions">
-                    <n-button
-                      v-if="addon.status === 'update'"
-                      type="primary"
-                      size="small"
-                      @click="updateOne(addon)"
-                    >
-                      {{ t("update") }}
-                    </n-button>
-                    <n-button
-                      v-else
-                      quaternary
-                      size="small"
-                      @click="showDetails(addon)"
-                    >
-                      {{ t("details") }}
-                    </n-button>
-                  </div>
-                </article>
-              </div>
-
-              <n-empty
-                v-else
-                class="empty-state"
-                :description="
-                  addons.length ? t('noMatchingAddons') : t('noAddonsFound')
-                "
+              <n-tabs
+                v-model:value="activeAddonTab"
+                type="line"
+                animated
+                class="addon-tabs"
               >
-                <template #icon><Puzzle :size="42" :stroke-width="1.3" /></template>
-                <template #extra>
-                  <n-button v-if="activeInstallation" secondary @click="runScan()">
-                    {{ t("rescan") }}
-                  </n-button>
-                  <n-button v-else type="primary" @click="openSettings">
-                    {{ t("select") }}
-                  </n-button>
-                </template>
-              </n-empty>
+                <n-tab-pane name="local" :tab="t('localAddons')">
+                  <div class="panel-toolbar">
+                    <div>
+                      <h2>{{ t("myAddons") }}</h2>
+                      <p>{{ t("manageAddons") }}</p>
+                    </div>
+                    <div class="toolbar-controls">
+                      <n-input
+                        v-model:value="searchTerm"
+                        clearable
+                        :placeholder="t('searchAddons')"
+                        class="search-input"
+                      >
+                        <template #prefix><Search :size="17" /></template>
+                      </n-input>
+                      <n-select
+                        v-model:value="statusFilter"
+                        :options="filterOptions"
+                        class="filter-select"
+                        :consistent-menu-width="false"
+                      />
+                    </div>
+                  </div>
+
+                  <div class="table-header">
+                    <span>{{ t("addon") }}</span>
+                    <span>{{ t("localVersion") }}</span>
+                    <span>{{ t("latestVersion") }}</span>
+                    <span>{{ t("status") }}</span>
+                    <span>{{ t("update") }}</span>
+                    <span>{{ t("settings") }}</span>
+                  </div>
+
+                  <div v-if="scanning" class="table-loading">
+                    <div v-for="item in 5" :key="item" class="skeleton-row">
+                      <n-skeleton height="42px" width="42px" round />
+                      <div>
+                        <n-skeleton text width="42%" />
+                        <n-skeleton text width="70%" />
+                      </div>
+                      <n-skeleton text width="66px" />
+                      <n-skeleton text width="72px" />
+                      <n-skeleton text width="78px" />
+                    </div>
+                  </div>
+
+                  <div v-else-if="visibleAddons.length" class="addon-list">
+                    <article
+                      v-for="addon in visibleAddons"
+                      :key="addon.id"
+                      class="addon-row"
+                      :class="{ 'has-update': addon.status === 'update' }"
+                      @dblclick="showDetails(addon)"
+                    >
+                      <button
+                        type="button"
+                        class="addon-main addon-main-button"
+                        @click="showDetails(addon)"
+                      >
+                        <div class="addon-avatar" :data-source="addon.source">
+                          {{ addon.title.slice(0, 1).toUpperCase() }}
+                        </div>
+                        <div class="addon-copy">
+                          <div class="addon-title-line">
+                            <strong>{{ addon.title }}</strong>
+                            <n-tag
+                              v-if="addon.interfaceVersion"
+                              size="tiny"
+                              :bordered="false"
+                              class="interface-tag"
+                            >
+                              {{ addon.interfaceVersion }}
+                            </n-tag>
+                          </div>
+                          <p>
+                            {{ addon.notes || sourceLabel(addon.source) }}
+                          </p>
+                        </div>
+                      </button>
+
+                      <div class="version-cell">
+                        <span>{{ displayValue(addon.version, "unknown") }}</span>
+                      </div>
+
+                      <div class="version-cell latest-version-cell">
+                        <span>{{
+                          addon.latestVersion || t("notChecked")
+                        }}</span>
+                      </div>
+
+                      <div class="status-cell" :data-status="addon.status">
+                        <LoaderCircle
+                          v-if="
+                            addon.status === 'checking' ||
+                            addon.status === 'updating'
+                          "
+                          class="spin"
+                          :size="15"
+                        />
+                        <CheckCircle2
+                          v-else-if="addon.status === 'current'"
+                          :size="15"
+                        />
+                        <Download
+                          v-else-if="addon.status === 'update'"
+                          :size="15"
+                        />
+                        <CircleHelp
+                          v-else-if="addon.status === 'untracked'"
+                          :size="15"
+                        />
+                        <AlertCircle v-else :size="15" />
+                        <span>{{ statusLabel(addon.status) }}</span>
+                      </div>
+
+                      <div class="update-cell">
+                        <div
+                          v-if="addon.status === 'updating'"
+                          class="update-progress"
+                        >
+                          <div
+                            class="indeterminate-progress"
+                            role="progressbar"
+                            :aria-label="t('statusUpdating')"
+                          >
+                            <span />
+                          </div>
+                          <small>{{ t("statusUpdating") }}</small>
+                        </div>
+                        <n-button
+                          v-else
+                          size="small"
+                          :type="
+                            addon.status === 'update' ? 'primary' : 'default'
+                          "
+                          :disabled="
+                            addon.status !== 'update' || hasActiveOperations
+                          "
+                          @click="updateOne(addon)"
+                        >
+                          {{
+                            addon.status === "current"
+                              ? t("alreadyLatest")
+                              : t("update")
+                          }}
+                        </n-button>
+                      </div>
+
+                      <div class="settings-cell">
+                        <n-dropdown
+                          trigger="click"
+                          :options="addonSettingsOptions(addon)"
+                          @select="
+                            (action: string) =>
+                              handleAddonSetting(action, addon)
+                          "
+                        >
+                          <n-button
+                            quaternary
+                            circle
+                            size="small"
+                            :aria-label="t('settings')"
+                          >
+                            <template #icon>
+                              <Settings2 :size="15" />
+                            </template>
+                          </n-button>
+                        </n-dropdown>
+                      </div>
+                    </article>
+                  </div>
+
+                  <n-empty
+                    v-else
+                    class="empty-state"
+                    :description="
+                      addons.length
+                        ? t('noMatchingAddons')
+                        : t('noAddonsFound')
+                    "
+                  >
+                    <template #icon>
+                      <Puzzle :size="42" :stroke-width="1.3" />
+                    </template>
+                    <template #extra>
+                      <n-button
+                        v-if="activeInstallation"
+                        secondary
+                        @click="runScan()"
+                      >
+                        {{ t("rescan") }}
+                      </n-button>
+                      <n-button
+                        v-else
+                        type="primary"
+                        :disabled="hasActiveOperations"
+                        @click="openSettings"
+                      >
+                        {{ t("select") }}
+                      </n-button>
+                    </template>
+                  </n-empty>
+                </n-tab-pane>
+
+                <n-tab-pane name="library" :tab="t('addonLibrary')">
+                  <n-empty
+                    class="library-empty"
+                    :description="t('addonLibraryPending')"
+                  >
+                    <template #icon>
+                      <Puzzle :size="46" :stroke-width="1.2" />
+                    </template>
+                  </n-empty>
+                </n-tab-pane>
+              </n-tabs>
             </section>
 
             <footer class="content-footer">
@@ -1097,7 +1409,11 @@ watch(
           <template #footer>
             <div class="modal-footer">
               <n-button @click="cancelSettings">{{ t("cancel") }}</n-button>
-              <n-button type="primary" @click="saveSettings">
+              <n-button
+                type="primary"
+                :disabled="hasActiveOperations"
+                @click="saveSettings"
+              >
                 <template #icon><Check :size="16" /></template>
                 {{ t("saveSettings") }}
               </n-button>
@@ -1112,6 +1428,24 @@ watch(
           :bordered="false"
           :title="t('addonDetails')"
         >
+          <template #header-extra>
+            <n-button
+              size="small"
+              secondary
+              :loading="detailsLoading"
+              :disabled="
+                !selectedAddon ||
+                selectedAddon.source === 'wowinterface' ||
+                settings.pluginDataSource !== 'curseforge' ||
+                !activeInstallation
+              "
+              @click="refreshDetails"
+            >
+              <template #icon><RefreshCw :size="14" /></template>
+              {{ t("refreshDetails") }}
+            </n-button>
+          </template>
+
           <div v-if="selectedAddon" class="details-content">
             <div class="details-hero">
               <div class="addon-avatar large" :data-source="selectedAddon.source">
@@ -1163,6 +1497,103 @@ watch(
             <div v-else-if="detailsError" class="error-note">
               <AlertCircle :size="16" />
               {{ detailsError }}
+            </div>
+
+            <div class="request-panel">
+              <div class="request-panel-header">
+                <span>{{ t("requestProcess") }}</span>
+                <n-tag
+                  size="small"
+                  :bordered="false"
+                  :type="
+                    detailsRequestStatus === 'success'
+                      ? 'success'
+                      : detailsRequestStatus === 'partial'
+                        ? 'warning'
+                      : detailsRequestStatus === 'error'
+                        ? 'error'
+                        : detailsRequestStatus === 'loading'
+                          ? 'info'
+                          : 'default'
+                  "
+                >
+                  {{
+                    detailsRequestStatus === "success"
+                      ? t("requestSucceeded")
+                      : detailsRequestStatus === "partial"
+                        ? `${t("requestSucceeded")} / ${t("requestFailed")}`
+                      : detailsRequestStatus === "error"
+                        ? t("requestFailed")
+                        : detailsRequestStatus === "loading"
+                          ? t("requesting")
+                          : t("waitingForRequest")
+                  }}
+                </n-tag>
+              </div>
+              <div v-if="detailsLoading" class="request-target">
+                <code>GET</code>
+                <span>{{ detailsRequestTarget }}</span>
+              </div>
+              <div v-if="detailsLoading" class="request-progress">
+                <LoaderCircle :size="14" class="spin" />
+                <span>{{ t("requesting") }}</span>
+              </div>
+              <div
+                v-else-if="!detailsRequests.length"
+                class="request-empty"
+              >
+                {{ t("waitingForRefresh") }}
+              </div>
+              <div v-else class="request-traces">
+                <article
+                  v-for="(request, index) in detailsRequests"
+                  :key="`${index}-${request.method}-${request.url}`"
+                  class="request-trace"
+                >
+                  <div class="request-trace-header">
+                    <strong>{{ index + 1 }}</strong>
+                    <code>{{ request.method }}</code>
+                    <n-tag
+                      size="small"
+                      :bordered="false"
+                      :type="
+                        request.status === 'success' ? 'success' : 'error'
+                      "
+                    >
+                      {{
+                        request.statusCode
+                          ? `HTTP ${request.statusCode}`
+                          : request.status === "success"
+                            ? t("requestSucceeded")
+                            : t("requestFailed")
+                      }}
+                    </n-tag>
+                    <small>
+                      {{
+                        t("requestDuration", {
+                          duration: request.durationMs,
+                        })
+                      }}
+                    </small>
+                  </div>
+                  <code class="request-url">{{ request.url }}</code>
+                  <div class="response-content">
+                    <span>{{ t("responseContent") }}</span>
+                    <pre>{{
+                      request.content ||
+                      request.error ||
+                      t("waitingForResponse")
+                    }}</pre>
+                  </div>
+                </article>
+              </div>
+              <div
+                v-if="detailsError && !detailsRequests.length"
+                class="response-content"
+              >
+                <span>{{ t("responseContent") }}</span>
+                <pre>{{ detailsError }}</pre>
+              </div>
             </div>
 
             <template v-if="selectedAddon.remoteDetails">
