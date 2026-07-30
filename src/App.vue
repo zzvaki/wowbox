@@ -51,6 +51,7 @@ import {
   checkAddonUpdates,
   chooseGameRoot,
   detectInstallations,
+  fetchAddonDetails,
   installAddonUpdate,
   scanAddons,
   syncAuthorizedGameRoots,
@@ -175,6 +176,8 @@ const settingsVisible = ref(false);
 const expandedSettings = ref<string[]>([]);
 const detailsVisible = ref(false);
 const selectedAddon = ref<AddonInfo | null>(null);
+const detailsLoading = ref(false);
+const detailsError = ref("");
 const apiKeyVisible = ref(false);
 const settings = ref<AppSettings>(cloneSettings(defaultSettings));
 const settingsDraft = ref<AppSettings>(cloneSettings(defaultSettings));
@@ -394,7 +397,7 @@ async function runUpdateCheck() {
   checking.value = true;
   addons.value = addons.value.map((addon) => ({
     ...addon,
-    status: addon.source === "unknown" ? "untracked" : "checking",
+    status: addon.source === "wowinterface" ? "untracked" : "checking",
   }));
   try {
     const results = await checkAddonUpdates(
@@ -411,7 +414,10 @@ async function runUpdateCheck() {
         ...addon,
         status: result.status,
         title: result.title || addon.title,
+        author: result.author || addon.author,
         notes: result.summary || addon.notes,
+        source: result.sourceId ? ("curseforge" as const) : addon.source,
+        sourceId: result.sourceId || addon.sourceId,
         latestVersion: result.latestVersion,
         latestFileId: result.latestFileId,
         latestDownloadUrl: result.downloadUrl,
@@ -427,7 +433,7 @@ async function runUpdateCheck() {
   } catch (error) {
     addons.value = addons.value.map((addon) => ({
       ...addon,
-      status: addon.source === "unknown" ? "untracked" : "error",
+      status: addon.source === "wowinterface" ? "untracked" : "error",
     }));
     message.error(errorMessage(error, t("checkUpdatesFailed")));
   } finally {
@@ -503,9 +509,51 @@ function clearClientPath(flavor: GameFlavor) {
   delete settingsDraft.value.clientPaths[flavor];
 }
 
-function showDetails(addon: AddonInfo) {
+async function showDetails(addon: AddonInfo) {
   selectedAddon.value = addon;
+  detailsLoading.value = false;
+  detailsError.value = "";
   detailsVisible.value = true;
+  if (
+    addon.remoteDetails ||
+    addon.source === "wowinterface" ||
+    settings.value.pluginDataSource !== "curseforge" ||
+    !activeInstallation.value
+  ) {
+    return;
+  }
+
+  const requestedAddonId = addon.id;
+  detailsLoading.value = true;
+  try {
+    const details = await fetchAddonDetails(
+      addon,
+      activeInstallation.value.flavor,
+      settings.value.curseforgeApiKey,
+    );
+    Object.assign(addon, {
+      title: details.name || addon.title,
+      notes: details.summary || addon.notes,
+      author:
+        details.authors.map((author) => author.name).filter(Boolean).join(", ") ||
+        addon.author,
+      source: "curseforge" as const,
+      sourceId: details.projectId,
+      websiteUrl: details.websiteUrl || addon.websiteUrl,
+      remoteDetails: details,
+    });
+    if (selectedAddon.value?.id === requestedAddonId) {
+      selectedAddon.value = addon;
+    }
+  } catch (error) {
+    if (selectedAddon.value?.id === requestedAddonId) {
+      detailsError.value = errorMessage(error, t("detailsLoadFailed"));
+    }
+  } finally {
+    if (selectedAddon.value?.id === requestedAddonId) {
+      detailsLoading.value = false;
+    }
+  }
 }
 
 function statusLabel(status: AddonStatus) {
@@ -542,6 +590,23 @@ function formatRelativeTime(date: Date | null) {
     hour: "2-digit",
     minute: "2-digit",
   });
+}
+
+function formatNumber(value: number) {
+  return new Intl.NumberFormat(locale.value, { notation: "compact" }).format(
+    value,
+  );
+}
+
+function formatDate(value: string | undefined) {
+  if (!value) return t("unknown");
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return t("unknown");
+  return new Intl.DateTimeFormat(locale.value, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  }).format(date);
 }
 
 function displayValue(value: string | undefined, fallback: TranslationKey) {
@@ -1064,7 +1129,76 @@ watch(
               <div><dt>{{ t("latestVersion") }}</dt><dd>{{ selectedAddon.latestVersion || t("notChecked") }}</dd></div>
               <div><dt>{{ t("interface") }}</dt><dd>{{ displayValue(selectedAddon.interfaceVersion, "unknown") }}</dd></div>
               <div><dt>{{ t("folderCount") }}</dt><dd>{{ selectedAddon.folders.length }}</dd></div>
+              <template v-if="selectedAddon.remoteDetails">
+                <div>
+                  <dt>{{ t("curseForgeProjectId") }}</dt>
+                  <dd>{{ selectedAddon.remoteDetails.projectId }}</dd>
+                </div>
+                <div>
+                  <dt>{{ t("downloads") }}</dt>
+                  <dd>{{ formatNumber(selectedAddon.remoteDetails.downloadCount) }}</dd>
+                </div>
+                <div>
+                  <dt>{{ t("rating") }}</dt>
+                  <dd>{{ selectedAddon.remoteDetails.rating?.toFixed(1) || t("unknown") }}</dd>
+                </div>
+                <div>
+                  <dt>{{ t("thumbsUp") }}</dt>
+                  <dd>{{ formatNumber(selectedAddon.remoteDetails.thumbsUpCount) }}</dd>
+                </div>
+                <div>
+                  <dt>{{ t("dateCreated") }}</dt>
+                  <dd>{{ formatDate(selectedAddon.remoteDetails.dateCreated) }}</dd>
+                </div>
+                <div>
+                  <dt>{{ t("dateModified") }}</dt>
+                  <dd>{{ formatDate(selectedAddon.remoteDetails.dateModified) }}</dd>
+                </div>
+              </template>
             </dl>
+
+            <div v-if="detailsLoading" class="details-loading">
+              <n-skeleton text :repeat="4" />
+            </div>
+            <div v-else-if="detailsError" class="error-note">
+              <AlertCircle :size="16" />
+              {{ detailsError }}
+            </div>
+
+            <template v-if="selectedAddon.remoteDetails">
+              <div class="details-section">
+                <span>{{ t("categories") }}</span>
+                <div class="details-tags">
+                  <n-tag
+                    v-for="category in selectedAddon.remoteDetails.categories"
+                    :key="category"
+                    size="small"
+                    :bordered="false"
+                  >
+                    {{ category }}
+                  </n-tag>
+                  <small v-if="!selectedAddon.remoteDetails.categories.length">
+                    {{ t("noCategories") }}
+                  </small>
+                </div>
+              </div>
+              <div class="details-section">
+                <span>{{ t("description") }}</span>
+                <p class="remote-description">
+                  {{ selectedAddon.remoteDetails.description || t("noDescription") }}
+                </p>
+              </div>
+              <div
+                v-if="selectedAddon.remoteDetails.websiteUrl"
+                class="details-section"
+              >
+                <span>{{ t("projectWebsite") }}</span>
+                <code class="project-url">
+                  {{ selectedAddon.remoteDetails.websiteUrl }}
+                </code>
+              </div>
+            </template>
+
             <div class="folder-list">
               <span>{{ t("folders") }}</span>
               <code v-for="folder in selectedAddon.folders" :key="folder">{{ folder }}</code>

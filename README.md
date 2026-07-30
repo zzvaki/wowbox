@@ -8,7 +8,8 @@ WowBox 是一个专注于“扫描、识别、更新”的跨平台《魔兽世�
 - 支持正式服、经典进度服、经典旧世、周年纪念服、PTR 和 Beta 等多个产品目录
 - 解析插件 `.toc` 文件中的中文标题、描述、作者、版本、Interface 和更新源 ID
 - 使用 `X-Curse-Project-ID` 合并一个插件包包含的多个文件夹
-- 通过 CurseForge REST API 查询插件信息与可用更新
+- 通过 CurseForge REST API 搜索插件，并查询项目详情与可用更新
+- 在详情页查看 CurseForge 作者、分类、下载量、评分、更新时间和完整介绍
 - 在 UI 中更新单个插件或全部插件
 - 更新前自动备份旧目录，安装失败时自动回滚
 - 拒绝 ZIP 路径穿越，限制下载包大小为 200 MB
@@ -47,14 +48,14 @@ pnpm tauri build
 
 一期数据源为 CurseForge。应用会调用其 REST API 的项目与文件接口，补全插件名称、简介、官方网站、最新版本与下载地址。
 
-默认 `x-api-key` 从原生进程的 `CURSEFORGE_API_KEY` 读取：开发时可由启动环境提供，打包时会注入二进制。它不会显示或传递到 WebView。构建前可执行：
+默认 `x-api-key` 从原生进程的 `CURSEFORGE_API_KEY` 读取：开发时可由启动环境提供，打包时可以注入二进制。它不会显示或传递到 WebView。构建前可执行：
 
 ```bash
 export CURSEFORGE_API_KEY='your-key'
 pnpm tauri build
 ```
 
-用户也可以在“设置 → 插件信息数据源”中填写个人 Key；个人 Key 优先于默认 Key，且仅在开启“记住个人 API Key”后以明文保存到本机。下载文件时不会向 CurseForge CDN 发送任何 API Key。桌面应用中的构建期 Key 不能视为不可提取的机密，建议使用可轮换、权限受限的 Key。
+用户也可以在“设置 → 插件信息数据源”中填写个人 Key；个人 Key 优先于默认 Key，且仅在开启“记住个人 API Key”后以明文保存到本机。下载文件时不会向 CurseForge CDN 发送任何 API Key。桌面应用中的构建期 Key 不能视为不可提取的机密；[CurseForge 官方第三方 API 条款](https://support.curseforge.com/support/solutions/articles/9000207405-curseforge-3rd-party-api-terms-and-conditions)还规定 API Key 不可转让或与第三方共享，因此公开发行版本不应内置共享 Key，除非已取得 CurseForge 的书面许可。
 
 数据源选择器已为 WoWInterface 预留入口；一期仅启用 CurseForge，选择 WoWInterface 时会提示其仍在开发中。
 
@@ -98,6 +99,6 @@ src-tauri/src/
 
 ## 一期限制
 
-- 只有 `.toc` 中带 `X-Curse-Project-ID` 的插件才能在一期自动关联更新源；其余插件会标记为“未关联”。
+- `.toc` 中带 `X-Curse-Project-ID` 的插件会直接关联；其余插件会按目录名和标题搜索 CurseForge，并且只有精确匹配时才自动关联。
 - CurseForge 下载是否可用取决于默认或个人 API Key 的权限，以及插件作者的分发设置。
 - 当前不包含插件市场、账号同步、云端配置或 WeakAuras 管理。

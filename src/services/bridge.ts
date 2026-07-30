@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { mockAddons, mockCheckUpdates, mockInstallations } from "@/data/mock";
 import type {
+  AddonDetails,
   AddonInfo,
   GameInstallation,
   UpdateCheckResult,
@@ -50,6 +51,35 @@ export async function checkAddonUpdates(
     addons,
     flavor,
     provider,
+    userCurseforgeApiKey: userCurseforgeApiKey || null,
+  });
+}
+
+export async function fetchAddonDetails(
+  addon: AddonInfo,
+  flavor: string,
+  userCurseforgeApiKey?: string,
+): Promise<AddonDetails> {
+  if (!inTauri()) {
+    await delay(500);
+    return {
+      projectId: addon.sourceId ?? "3358",
+      name: addon.title,
+      slug: addon.folderName.toLowerCase(),
+      summary: addon.notes,
+      description: addon.notes,
+      authors: addon.author ? [{ name: addon.author }] : [],
+      categories: ["Addons"],
+      downloadCount: 12_500_000,
+      thumbsUpCount: 420,
+      rating: 4.8,
+      websiteUrl: addon.websiteUrl,
+      dateModified: addon.modifiedAt,
+    };
+  }
+  return invoke<AddonDetails>("fetch_addon_details", {
+    addon,
+    flavor,
     userCurseforgeApiKey: userCurseforgeApiKey || null,
   });
 }

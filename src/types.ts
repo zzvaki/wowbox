@@ -47,6 +47,7 @@ export interface AddonInfo {
   latestFileId?: string;
   latestDownloadUrl?: string;
   websiteUrl?: string;
+  remoteDetails?: AddonDetails;
   error?: string;
   modifiedAt?: string;
 }
@@ -55,12 +56,39 @@ export interface UpdateCheckResult {
   addonId: string;
   status: "current" | "update" | "untracked" | "error";
   title?: string;
+  author?: string;
   summary?: string;
+  sourceId?: string;
   latestVersion?: string;
   latestFileId?: string;
   downloadUrl?: string;
   websiteUrl?: string;
   error?: string;
+}
+
+export interface AddonAuthor {
+  name: string;
+  url?: string;
+}
+
+export interface AddonDetails {
+  projectId: string;
+  name: string;
+  slug: string;
+  summary: string;
+  description: string;
+  authors: AddonAuthor[];
+  categories: string[];
+  downloadCount: number;
+  thumbsUpCount: number;
+  rating?: number;
+  websiteUrl?: string;
+  wikiUrl?: string;
+  issuesUrl?: string;
+  sourceUrl?: string;
+  dateCreated?: string;
+  dateModified?: string;
+  dateReleased?: string;
 }
 
 export interface UpdateRequest {

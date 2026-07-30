@@ -787,6 +787,53 @@ button {
   border-radius: 16px !important;
 }
 
+.details-modal .n-card__content {
+  max-height: calc(100vh - 220px);
+  overflow-y: auto;
+}
+
+.details-loading {
+  margin: 16px 0;
+}
+
+.details-section {
+  margin-top: 16px;
+}
+
+.details-section > span {
+  display: block;
+  margin-bottom: 7px;
+  color: #777b8c;
+  font-size: 10px;
+  font-weight: 650;
+}
+
+.details-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.details-tags small {
+  color: #a0a3af;
+  font-size: 10px;
+}
+
+.remote-description {
+  margin: 0;
+  color: #5f6272;
+  font-size: 11px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+}
+
+.project-url {
+  display: block;
+  overflow-wrap: anywhere;
+  color: #626de1;
+  font-size: 10px;
+}
+
 .settings-section {
   padding: 3px 0;
 }

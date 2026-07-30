@@ -42,7 +42,9 @@ pub struct UpdateCheckResult {
     pub addon_id: String,
     pub status: String,
     pub title: Option<String>,
+    pub author: Option<String>,
     pub summary: Option<String>,
+    pub source_id: Option<String>,
     pub latest_version: Option<String>,
     pub latest_file_id: Option<String>,
     pub download_url: Option<String>,
@@ -56,7 +58,9 @@ impl UpdateCheckResult {
             addon_id,
             status: "untracked".into(),
             title: None,
+            author: None,
             summary: None,
+            source_id: None,
             latest_version: None,
             latest_file_id: None,
             download_url: None,
@@ -70,7 +74,9 @@ impl UpdateCheckResult {
             addon_id,
             status: "error".into(),
             title: None,
+            author: None,
             summary: None,
+            source_id: None,
             latest_version: None,
             latest_file_id: None,
             download_url: None,
@@ -78,6 +84,35 @@ impl UpdateCheckResult {
             error: Some(error.into()),
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AddonAuthor {
+    pub name: String,
+    pub url: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AddonDetails {
+    pub project_id: String,
+    pub name: String,
+    pub slug: String,
+    pub summary: String,
+    pub description: String,
+    pub authors: Vec<AddonAuthor>,
+    pub categories: Vec<String>,
+    pub download_count: u64,
+    pub thumbs_up_count: u64,
+    pub rating: Option<f64>,
+    pub website_url: Option<String>,
+    pub wiki_url: Option<String>,
+    pub issues_url: Option<String>,
+    pub source_url: Option<String>,
+    pub date_created: Option<String>,
+    pub date_modified: Option<String>,
+    pub date_released: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

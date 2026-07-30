@@ -5,7 +5,9 @@ mod scanner;
 mod updater;
 mod version;
 
-use models::{AddonInfo, GameInstallation, UpdateCheckResult, UpdateRequest, UpdateResult};
+use models::{
+    AddonDetails, AddonInfo, GameInstallation, UpdateCheckResult, UpdateRequest, UpdateResult,
+};
 use std::{collections::HashSet, fs, path::PathBuf, sync::Mutex};
 use tauri::{Manager, State};
 use tauri_plugin_dialog::DialogExt;
@@ -192,6 +194,15 @@ async fn check_updates(
 }
 
 #[tauri::command]
+async fn fetch_addon_details(
+    addon: AddonInfo,
+    flavor: String,
+    user_curseforge_api_key: Option<String>,
+) -> Result<AddonDetails, String> {
+    providers::fetch_addon_details(addon, flavor, user_curseforge_api_key).await
+}
+
+#[tauri::command]
 async fn update_addon(
     request: UpdateRequest,
     managed_roots: State<'_, ManagedAddonRoots>,
@@ -228,6 +239,7 @@ pub fn run() {
             sync_authorized_game_roots,
             scan_addons,
             check_updates,
+            fetch_addon_details,
             update_addon
         ])
         .run(tauri::generate_context!())
